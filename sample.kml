@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Sample nodes</name>
+    <Folder>
+      <name>Cabinets</name>
+      <Placemark>
+        <name>CAB-01</name>
+        <description>Street cabinet north</description>
+        <Point><coordinates>-8.610500,41.150200,0</coordinates></Point>
+      </Placemark>
+      <Placemark>
+        <name>CAB-02</name>
+        <Point><coordinates>-8.608100,41.151400,0</coordinates></Point>
+      </Placemark>
+      <Placemark>
+        <name>CAB-03</name>
+        <Point><coordinates>-8.606300,41.149100,0</coordinates></Point>
+      </Placemark>
+    </Folder>
+    <Folder>
+      <name>Poles</name>
+      <Placemark>
+        <name>POLE-A</name>
+        <Point><coordinates>-8.612900,41.148600,0</coordinates></Point>
+      </Placemark>
+      <Placemark>
+        <name>POLE-B</name>
+        <Point><coordinates>-8.604800,41.152300,0</coordinates></Point>
+      </Placemark>
+      <Placemark>
+        <name>POLE-C</name>
+        <Point><coordinates>-8.609900,41.153100,0</coordinates></Point>
+      </Placemark>
+    </Folder>
+  </Document>
+</kml>
