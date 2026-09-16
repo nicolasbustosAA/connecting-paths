@@ -1,6 +1,6 @@
 # Connecting Paths
 
-A single-file browser tool: load a KML, see its point placemarks as nodes on a map,
+A single-file browser tool: load a KML or KMZ, see its point placemarks as nodes on a map,
 click node pairs to connect them (paths are auto-named from a configurable template,
 `FROM↔TO` by default), add or remove nodes by hand, and export the results as CSV
 (and as a KML with the paths drawn using the exact node coordinates).
@@ -8,7 +8,7 @@ click node pairs to connect them (paths are auto-named from a configurable templ
 ## Use it
 
 1. Double-click `index.html` (opens in your default browser — Chrome/Edge/Firefox).
-2. Click **Load KML…** or drag a `.kml` file onto the window. `sample.kml` is included for testing.
+2. Click **Load KML/KMZ…** or drag a `.kml` or `.kmz` file onto the window. `sample.kml` is included for testing.
 3. Click a node on the map (or in the Nodes list) — it turns orange. Click a second node.
 4. The path is created immediately and named from the path template — `FROM↔TO` by default
    (the two node names in upper case, joined by `↔`, no spaces). A line is drawn between
@@ -84,5 +84,8 @@ or drag-and-drop) restores both the nodes and the connections.
   choose **Custom tile server…** and paste
   an XYZ template such as `https://tiles.mycompany.local/{z}/{x}/{y}.png`; it is saved for
   next time.
-- `.kmz` is not supported — unzip it and load the `.kml` inside.
+- `.kmz` files are unzipped in the browser (no upload, no extra libraries) and the KML inside
+  is loaded — `doc.kml` is preferred, otherwise the shallowest `.kml` entry in the archive.
+  Other contents of the archive (images, overlays, styles) are ignored. Very old browsers
+  without `DecompressionStream` cannot inflate compressed KMZ; unzip the file manually there.
 - A BOM or leading whitespace in the KML is handled automatically.

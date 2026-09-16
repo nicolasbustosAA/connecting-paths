@@ -800,8 +800,8 @@ svg.leaflet-image-layer.leaflet-interactive path {
 <body>
 <header>
   <h1>Connecting<span>Paths</span></h1>
-  <button id="btnLoad" class="primary">Load KML&hellip;</button>
-  <input id="fileKml" type="file" accept=".kml,.xml" hidden />
+  <button id="btnLoad" class="primary">Load KML/KMZ&hellip;</button>
+  <input id="fileKml" type="file" accept=".kml,.kmz,.xml" hidden />
   <button id="btnImportCsv">Import CSV&hellip;</button>
   <input id="fileCsv" type="file" accept=".csv,.txt" hidden />
   <button id="btnAddNode" title="Click, then click the map to place nodes">Add node: off</button>
@@ -842,7 +842,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   <span id="stMsg"></span>
 </div>
 
-<div id="drop">Drop a .kml file to load</div>
+<div id="drop">Drop a .kml or .kmz file to load</div>
 
 <dialog id="dlg">
   <h3 id="dlgTitle">Enter a value</h3>
@@ -1665,10 +1665,13 @@ svg.leaflet-image-layer.leaflet-interactive path {
   }
 
   function readKmlFile(file) {
+    if (/\.kmz$/i.test(file.name)) { readKmzFile(file); return; }
     var fr = new FileReader();
     fr.onload = function () {
+      var text = String(fr.result);
+      if (/^PK\x03\x04/.test(text)) { readKmzFile(file); return; }
       try {
-        var parsed = parseKml(fr.result);
+        var parsed = parseKml(text);
         loadNodes(parsed.nodes, file.name, parsed.links);
       } catch (err) {
         msg(err.message, "err");
@@ -1676,6 +1679,93 @@ svg.leaflet-image-layer.leaflet-interactive path {
       }
     };
     fr.readAsText(file);
+  }
+
+  /* ---------------- KMZ (zipped KML) reading ---------------- */
+
+  function utf8(bytes) { return new TextDecoder("utf-8").decode(bytes); }
+
+  function inflateRaw(bytes) {
+    if (typeof DecompressionStream !== "function") {
+      return Promise.reject(new Error("This browser cannot open compressed KMZ files. Unzip the .kmz and load the .kml inside."));
+    }
+    var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    return new Response(stream).arrayBuffer().then(function (buf) { return new Uint8Array(buf); });
+  }
+
+  function zipEntries(buf) {
+    var dv = new DataView(buf), len = buf.byteLength, eocd = -1;
+    var min = Math.max(0, len - 66000);
+    for (var i = len - 22; i >= min; i--) {
+      if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) throw new Error("This file is not a valid KMZ archive.");
+
+    var count = dv.getUint16(eocd + 10, true), p = dv.getUint32(eocd + 16, true), entries = [];
+    for (var k = 0; k < count && p + 46 <= len; k++) {
+      if (dv.getUint32(p, true) !== 0x02014b50) break;
+      var nameLen = dv.getUint16(p + 28, true);
+      var extraLen = dv.getUint16(p + 30, true);
+      var cmtLen = dv.getUint16(p + 32, true);
+      entries.push({
+        name: utf8(new Uint8Array(buf, p + 46, nameLen)),
+        method: dv.getUint16(p + 10, true),
+        csize: dv.getUint32(p + 20, true),
+        lho: dv.getUint32(p + 42, true)
+      });
+      p += 46 + nameLen + extraLen + cmtLen;
+    }
+    return entries;
+  }
+
+  function pickKmlEntry(entries) {
+    var kmls = entries.filter(function (e) {
+      return /\.kml$/i.test(e.name) && !/^__MACOSX[\/\\]/.test(e.name) && !/[\/\\]$/.test(e.name);
+    });
+    if (!kmls.length) return null;
+    kmls.sort(function (a, b) {
+      var da = /^doc\.kml$/i.test(a.name) ? 0 : 1, db = /^doc\.kml$/i.test(b.name) ? 0 : 1;
+      if (da !== db) return da - db;
+      var sa = a.name.split(/[\/\\]/).length, sb = b.name.split(/[\/\\]/).length;
+      if (sa !== sb) return sa - sb;
+      return a.name.localeCompare(b.name);
+    });
+    return kmls[0];
+  }
+
+  function zipEntryBytes(buf, entry) {
+    var dv = new DataView(buf);
+    if (entry.lho + 30 > buf.byteLength || dv.getUint32(entry.lho, true) !== 0x04034b50) {
+      return Promise.reject(new Error("Corrupt KMZ entry: " + entry.name));
+    }
+    var start = entry.lho + 30 + dv.getUint16(entry.lho + 26, true) + dv.getUint16(entry.lho + 28, true);
+    var size = entry.csize || dv.getUint32(entry.lho + 18, true) || (buf.byteLength - start);
+    var raw = new Uint8Array(buf, start, Math.max(0, Math.min(size, buf.byteLength - start)));
+    if (entry.method === 0) return Promise.resolve(raw);
+    if (entry.method === 8) return inflateRaw(raw);
+    return Promise.reject(new Error("Unsupported compression inside this KMZ (method " + entry.method + ")."));
+  }
+
+  function readKmzFile(file) {
+    function fail(err) {
+      var m = err && err.message ? err.message : "Could not read " + file.name + ".";
+      msg(m, "err");
+      alert(m);
+    }
+    var fr = new FileReader();
+    fr.onerror = function () { fail(new Error("Could not read " + file.name + ".")); };
+    fr.onload = function () {
+      try {
+        var buf = fr.result;
+        var entry = pickKmlEntry(zipEntries(buf));
+        if (!entry) throw new Error("No .kml file was found inside this KMZ.");
+        zipEntryBytes(buf, entry).then(function (bytes) {
+          var parsed = parseKml(utf8(bytes));
+          loadNodes(parsed.nodes, file.name, parsed.links);
+        }).catch(fail);
+      } catch (err) { fail(err); }
+    };
+    fr.readAsArrayBuffer(file);
   }
 
   /* ---------------- add / rename / delete nodes ---------------- */
@@ -1938,7 +2028,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     e.target.value = "";
   });
   $("btnImportCsv").addEventListener("click", function () {
-    if (!state.nodes.length) { msg("Load a KML first.", "err"); return; }
+    if (!state.nodes.length) { msg("Load a KML or KMZ first.", "err"); return; }
     $("fileCsv").click();
   });
   $("fileCsv").addEventListener("change", function (e) {
@@ -1973,7 +2063,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   $("linkSearch").addEventListener("input", renderLinks);
 
   $("btnAddNode").addEventListener("click", function () {
-    if (!state.nodes.length && !state.addMode) { msg("Load a KML first.", "err"); return; }
+    if (!state.nodes.length && !state.addMode) { msg("Load a KML or KMZ first.", "err"); return; }
     setAddMode(!state.addMode);
     if (state.addMode) msg("Add node: click anywhere on the map to place a node. Press Esc to stop.");
   });
@@ -2040,7 +2130,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     var f = e.dataTransfer && e.dataTransfer.files[0];
     if (!f) return;
     if (/\.csv$/i.test(f.name)) {
-      if (!state.nodes.length) { msg("Load a KML first.", "err"); return; }
+      if (!state.nodes.length) { msg("Load a KML or KMZ first.", "err"); return; }
       importCsv(f);
     } else readKmlFile(f);
   });
