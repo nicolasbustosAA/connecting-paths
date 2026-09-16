@@ -704,7 +704,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   button.primary { background: var(--accent); border-color: var(--accent); color: #06121c; font-weight: 600; }
   button.danger:hover { border-color: var(--danger); color: var(--danger); }
   button.on { background: var(--accent-2); border-color: var(--accent-2); color: #06121c; font-weight: 600; }
-  #map.adding { cursor: crosshair; }
+  #map.adding, #map.linking { cursor: crosshair; }
   .spacer { flex: 1; }
   #main { flex: 1; display: flex; min-height: 0; }
   #sidebar {
@@ -805,6 +805,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   <button id="btnImportCsv">Import CSV&hellip;</button>
   <input id="fileCsv" type="file" accept=".csv,.txt" hidden />
   <button id="btnAddNode" title="Click, then click the map to place nodes">Add node: off</button>
+  <button id="btnAddPath" title="Click, then click two nodes to connect them (existing paths become click-through)">Add path: off</button>
   <button id="btnNaming" title="Set the auto-naming format for nodes and paths">Naming&hellip;</button>
   <button id="btnExportCsv" disabled>Export CSV</button>
   <button id="btnExportKml" disabled>Export KML</button>
@@ -828,7 +829,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
       <h2>Connections <span class="count" id="linkCount">0</span></h2>
       <div class="pad"><input id="linkSearch" type="search" placeholder="Filter connections&hellip;" /></div>
       <div class="list" id="linkList"></div>
-      <div class="hint" id="hint">Click a node, then click a second node to create a connection (named FROM&#8596;TO). Use "Add node" to place new nodes on the map.</div>
+      <div class="hint" id="hint">Turn on "Add path" to connect nodes. With it off, clicking a node just selects it and clicking a path highlights it.</div>
     </div>
   </aside>
   <div id="map"></div>
@@ -941,7 +942,8 @@ svg.leaflet-image-layer.leaflet-interactive path {
     labels: true,
     seq: 1,           // next link sequence number
     nodeSeq: 1,       // next manually-added node sequence number
-    addMode: false    // "Add node": next map click places a node
+    addMode: false,   // "Add node": next map click places a node
+    pathMode: false   // "Add path": clicking two nodes connects them; paths are click-through
   };
 
   var NODE_TEMPLATE_KEY = "connecting-paths-node-template";
@@ -1288,15 +1290,20 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   function drawLink(l) {
     var a = state.byId[l.a], b = state.byId[l.b];
+    /* While "Add path" is on, paths are non-interactive so clicks fall through to the
+       nodes underneath — otherwise a node with many connections is impossible to hit. */
     var line = L.polyline([[a.lat, a.lon], [b.lat, b.lon]], {
       color: state.activeLink === l.id ? "#ff9f43" : "#3fa7ff",
       weight: state.activeLink === l.id ? 5 : 3,
-      opacity: 0.9
+      opacity: 0.9,
+      interactive: !state.pathMode
     });
-    line.on("click", function (e) {
-      L.DomEvent.stopPropagation(e);
-      setActiveLink(l.id);
-    });
+    if (!state.pathMode) {
+      line.on("click", function (e) {
+        L.DomEvent.stopPropagation(e);
+        setActiveLink(l.id);
+      });
+    }
     line.bindTooltip(l.name, { permanent: state.labels, direction: "center", className: "link-label" });
     line.addTo(linkLayer);
     l.line = line;
@@ -1309,7 +1316,23 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   /* ---------------- selection & linking ---------------- */
 
+  function clearSelection() {
+    if (!state.selected) return;
+    state.selected = null;
+    refreshNodeStyles();
+    renderNodes();
+    updateStatus();
+  }
+
+  function selectNode(id) {
+    state.selected = state.selected === id ? null : id;
+    refreshNodeStyles();
+    renderNodes();
+    updateStatus();
+  }
+
   function pickNode(id) {
+    if (!state.pathMode) { selectNode(id); return; }
     if (!state.selected) {
       state.selected = id;
       refreshNodeStyles();
@@ -1827,9 +1850,37 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   function setAddMode(on) {
     state.addMode = !!on;
+    if (state.addMode && state.pathMode) setPathMode(false);
+    if (state.addMode) clearSelection();
     $("btnAddNode").textContent = "Add node: " + (state.addMode ? "on" : "off");
     $("btnAddNode").classList.toggle("on", state.addMode);
     $("map").classList.toggle("adding", state.addMode);
+    updateHint();
+  }
+
+  function setPathMode(on) {
+    state.pathMode = !!on;
+    if (state.pathMode && state.addMode) setAddMode(false);
+    $("btnAddPath").textContent = "Add path: " + (state.pathMode ? "on" : "off");
+    $("btnAddPath").classList.toggle("on", state.pathMode);
+    $("map").classList.toggle("linking", state.pathMode);
+    clearSelection();
+    drawLinks();
+    updateHint();
+  }
+
+  function updateHint() {
+    var hint = $("hint");
+    if (!hint) return;
+    if (state.addMode) {
+      hint.textContent = "Add node is on: click anywhere on the map to place a node. Press Esc to stop.";
+    } else if (state.pathMode) {
+      hint.textContent = "Add path is on: click a node, then a second node to connect them. Existing paths " +
+        "are click-through while this is on, so crowded nodes stay easy to hit. Press Esc to stop.";
+    } else {
+      hint.textContent = "Turn on \"Add path\" to connect nodes. With it off, clicking a node just selects it " +
+        "and clicking a path highlights it.";
+    }
   }
 
   function save() {
@@ -2068,6 +2119,12 @@ svg.leaflet-image-layer.leaflet-interactive path {
     if (state.addMode) msg("Add node: click anywhere on the map to place a node. Press Esc to stop.");
   });
 
+  $("btnAddPath").addEventListener("click", function () {
+    if (!state.nodes.length && !state.pathMode) { msg("Load a KML or KMZ first.", "err"); return; }
+    setPathMode(!state.pathMode);
+    if (state.pathMode) msg("Add path: click a node, then a second node to connect them. Press Esc to stop.");
+  });
+
   var namingDlg = $("namingDlg");
   $("btnNaming").addEventListener("click", function () {
     $("nodeTemplateInput").value = getNodeTemplate();
@@ -2106,6 +2163,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   document.addEventListener("keydown", function (e) {
     if (dlg.open) return;
     if (e.key === "Escape" && state.addMode) { setAddMode(false); }
+    if (e.key === "Escape" && state.pathMode) { setPathMode(false); }
     if (e.key === "Escape" && state.selected) {
       state.selected = null; refreshNodeStyles(); renderNodes(); updateStatus();
     }
@@ -2138,6 +2196,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   setBasemap(lsGet(BASEMAP_KEY) || "esristreet", false);
   restore();
   renderAll();
+  updateHint();
   checkAllBasemaps();
 })();
 </script>

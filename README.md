@@ -9,11 +9,12 @@ click node pairs to connect them (paths are auto-named from a configurable templ
 
 1. Double-click `index.html` (opens in your default browser — Chrome/Edge/Firefox).
 2. Click **Load KML/KMZ…** or drag a `.kml` or `.kmz` file onto the window. `sample.kml` is included for testing.
-3. Click a node on the map (or in the Nodes list) — it turns orange. Click a second node.
-4. The path is created immediately and named from the path template — `FROM↔TO` by default
+3. Click **Add path** (it turns on and the cursor becomes a crosshair).
+4. Click a node on the map (or in the Nodes list) — it turns orange. Click a second node.
+5. The path is created immediately and named from the path template — `FROM↔TO` by default
    (the two node names in upper case, joined by `↔`, no spaces). A line is drawn between
    the two nodes.
-5. Repeat for every pair, then **Export CSV** and/or **Export KML**.
+6. Repeat for every pair, then **Export CSV** and/or **Export KML**.
 
 ## Features
 
@@ -23,9 +24,14 @@ click node pairs to connect them (paths are auto-named from a configurable templ
   matching each line's two endpoints back to nodes at the same coordinates (within 1 m).
 - Connections are always pairs of nodes; duplicate pairs are rejected.
 - Path names are generated, never typed, from a configurable template (default `FROM↔TO`, e.g. `TOWER A↔TOWER B`).
+- **Add path**: connections are only created while this toggle is on. While it is on,
+  existing paths are click-through (non-clickable), so a node with many connections
+  running over it stays easy to hit. With the toggle off, clicking a node just selects
+  it and clicking a path highlights it. Press `Esc` (or click the button again) to
+  leave the mode; **Add node** and **Add path** are mutually exclusive.
 - **Add node**: click the button (it turns on, cursor becomes a crosshair), then click
   anywhere on the map to drop a new node there, named from the node template. Click the
-  button again (or press `Esc`) to leave add mode and go back to normal node-linking clicks.
+  button again (or press `Esc`) to leave add mode.
 - **Rename**/**del** buttons on every row in the Nodes list: rename updates any of that
   node's existing connection names to match; delete removes the node and, after
   confirming, any connections attached to it.
