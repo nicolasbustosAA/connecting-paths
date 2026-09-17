@@ -705,6 +705,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   button.danger:hover { border-color: var(--danger); color: var(--danger); }
   button.on { background: var(--accent-2); border-color: var(--accent-2); color: #06121c; font-weight: 600; }
   #map.adding, #map.linking { cursor: crosshair; }
+  #map.moving { cursor: grab; }
   #map.node-dragging, #map.node-dragging * { cursor: grabbing !important; }
   .node-icon.sel { filter: drop-shadow(0 0 3px #ff9f43) drop-shadow(0 0 6px #ff9f43); }
   .spacer { flex: 1; }
@@ -808,6 +809,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   <input id="fileCsv" type="file" accept=".csv,.txt" hidden />
   <button id="btnAddNode" title="Click, then click the map to place nodes">Add node: off</button>
   <button id="btnAddPath" title="Click, then click two nodes to connect them (existing paths become click-through)">Add path: off</button>
+  <button id="btnMoveNode" title="Click, then drag a node to reposition it; connected paths follow in real time">Move node: off</button>
   <button id="btnNaming" title="Set the auto-naming format for nodes and paths">Naming&hellip;</button>
   <button id="btnExportCsv" disabled>Export CSV</button>
   <button id="btnExportKml" disabled>Export KML</button>
@@ -948,6 +950,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     nodeSeq: 1,       // next manually-added node sequence number
     addMode: false,   // "Add node": next map click places a node
     pathMode: false,  // "Add path": clicking two nodes connects them; paths are click-through
+    moveMode: false,  // "Move node": dragging a node is only allowed while this is on
     fileStyles: true, // honor <Style> from the loaded KML/KMZ instead of the app palette
     assets: []        // blob URLs created for icons extracted from a KMZ
   };
@@ -1474,7 +1477,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
       var m = url
         ? L.marker([node.lat, node.lon], { icon: nodeIcon(node, url), keyboard: false })
         : L.circleMarker([node.lat, node.lon], nodeStyle(node));
-      m.on("mousedown", function (e) { beginNodeDrag(node, m, e); });
+      m.on("mousedown", function (e) { if (state.moveMode) beginNodeDrag(node, m, e); });
       m.on("click", function (e) {
         L.DomEvent.stopPropagation(e);
         if (suppressNodeClick) { suppressNodeClick = false; return; }
@@ -1506,16 +1509,22 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   function beginNodeDrag(node, marker, downEvt) {
     L.DomEvent.stop(downEvt);
+    // Also stop the real native event, not just Leaflet's internal one - otherwise it
+    // keeps bubbling to the map container's own mousedown listener and the map's pan
+    // handler can start racing this drag, which is what made dragging feel flaky.
+    if (downEvt.originalEvent) L.DomEvent.stopPropagation(downEvt.originalEvent);
     suppressNodeClick = false; // a stray flag from an interrupted previous drag shouldn't eat this click
     var startPoint = downEvt.containerPoint;
     var dragging = false;
+    // Disabled right away (not only once the drag is confirmed) so panning never wins
+    // a race against a node drag that begins on the same mousedown.
+    map.dragging.disable();
 
     function onMove(e) {
       if (!dragging) {
         if (startPoint.distanceTo(e.containerPoint) < 4) return;
         dragging = true;
         pushUndo("move " + node.name);
-        map.dragging.disable();
         $("map").classList.add("node-dragging");
       }
       node.lat = e.latlng.lat;
@@ -1527,9 +1536,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
     function onUp() {
       map.off("mousemove", onMove);
       map.off("mouseup", onUp);
-      if (!dragging) return;
       map.dragging.enable();
       $("map").classList.remove("node-dragging");
+      if (!dragging) return;
       suppressNodeClick = true;
       recount();
       renderNodes();
@@ -2262,6 +2271,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   function setAddMode(on) {
     state.addMode = !!on;
     if (state.addMode && state.pathMode) setPathMode(false);
+    if (state.addMode && state.moveMode) setMoveMode(false);
     if (state.addMode) clearSelection();
     /* Double-click zoom would fight with click-to-place, so it steps aside here. */
     if (state.addMode) map.doubleClickZoom.disable(); else map.doubleClickZoom.enable();
@@ -2274,11 +2284,22 @@ svg.leaflet-image-layer.leaflet-interactive path {
   function setPathMode(on) {
     state.pathMode = !!on;
     if (state.pathMode && state.addMode) setAddMode(false);
+    if (state.pathMode && state.moveMode) setMoveMode(false);
     $("btnAddPath").textContent = "Add path: " + (state.pathMode ? "on" : "off");
     $("btnAddPath").classList.toggle("on", state.pathMode);
     $("map").classList.toggle("linking", state.pathMode);
     clearSelection();
     drawLinks();
+    updateHint();
+  }
+
+  function setMoveMode(on) {
+    state.moveMode = !!on;
+    if (state.moveMode && state.addMode) setAddMode(false);
+    if (state.moveMode && state.pathMode) setPathMode(false);
+    $("btnMoveNode").textContent = "Move node: " + (state.moveMode ? "on" : "off");
+    $("btnMoveNode").classList.toggle("on", state.moveMode);
+    $("map").classList.toggle("moving", state.moveMode);
     updateHint();
   }
 
@@ -2291,6 +2312,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
       hint.textContent = "Add path is on: click a node, then a second node to connect them \u2014 keep clicking " +
         "to chain a route. Existing paths are click-through while this is on, so crowded nodes stay easy to hit. " +
         "Press Esc to stop.";
+    } else if (state.moveMode) {
+      hint.textContent = "Move node is on: drag a node to reposition it \u2014 connected paths follow in real " +
+        "time. Clicking without dragging still just selects it. Press Esc to stop.";
     } else {
       hint.textContent = "Turn on \"Add path\" to connect nodes. With it off, clicking a node just selects it " +
         "and clicking a path highlights it. Delete removes the selection, Ctrl+Z undoes, F zooms to fit.";
@@ -2641,6 +2665,12 @@ svg.leaflet-image-layer.leaflet-interactive path {
     if (state.pathMode) msg("Add path: click a node, then a second node to connect them. Press Esc to stop.");
   });
 
+  $("btnMoveNode").addEventListener("click", function () {
+    if (!state.nodes.length && !state.moveMode) { msg("Load a KML or KMZ first.", "err"); return; }
+    setMoveMode(!state.moveMode);
+    if (state.moveMode) msg("Move node: drag a node to reposition it. Press Esc to stop.");
+  });
+
   var namingDlg = $("namingDlg");
   $("btnNaming").addEventListener("click", function () {
     $("nodeTemplateInput").value = getNodeTemplate();
@@ -2695,6 +2725,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
     if (e.key === "Escape" && state.addMode) { setAddMode(false); }
     if (e.key === "Escape" && state.pathMode) { setPathMode(false); }
+    if (e.key === "Escape" && state.moveMode) { setMoveMode(false); }
     if (e.key === "Escape" && state.selected) {
       state.selected = null; refreshNodeStyles(); renderNodes(); updateStatus();
     }
