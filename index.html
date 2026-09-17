@@ -813,6 +813,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   <span class="spacer"></span>
   <select id="basemap" title="Basemap"></select>
   <button id="btnRecheckMaps" title="Re-test which map providers your network can reach">Recheck maps</button>
+  <button id="btnFit" title="Zoom the map to fit every node (F)" disabled>Zoom to fit</button>
   <button id="btnLabels">Labels: on</button>
   <button id="btnFileStyles" title="Use the colors, icon sizes and line widths defined in the loaded KML/KMZ">File styles: on</button>
   <button id="btnUndo" disabled>Undo</button>
@@ -845,7 +846,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   <span id="stMsg"></span>
 </div>
 
-<div id="drop">Drop a .kml or .kmz file to load</div>
+<div id="drop">Drop a .kml, .kmz or .csv file to load</div>
 
 <dialog id="dlg">
   <h3 id="dlgTitle">Enter a value</h3>
@@ -1000,6 +1001,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   var BASEMAP_KEY = "connecting-paths-basemap";
   var CUSTOM_KEY = "connecting-paths-custom-tiles";
   var FILE_STYLES_KEY = "connecting-paths-file-styles";
+  var LABELS_KEY = "connecting-paths-labels";
   var currentBase = null;
   var basemapSel = document.getElementById("basemap");
 
@@ -1558,24 +1560,25 @@ svg.leaflet-image-layer.leaflet-interactive path {
     var a = state.selected, b = id;
     var dup = state.links.some(function (l) { return pairKey(l.a, l.b) === pairKey(a, b); });
     if (dup) {
+      /* Keep the current node selected so a mis-click mid-chain doesn't lose your place. */
       msg("Those two nodes are already connected.", "err");
-      state.selected = null;
-      refreshNodeStyles();
-      renderNodes();
-      updateStatus();
       return;
     }
     var na = state.byId[a], nb = state.byId[b];
     var linkId = "l" + (state.seq++);
     var name = pathName(na, nb, linkId);
+    pushUndo("connect " + name);
     state.links.push({ id: linkId, name: name, a: a, b: b });
-    state.selected = null;
+    /* Chain linking: the node just connected stays selected, so drawing a route
+       A-B-C-D is one click per node instead of two. Esc or a map click stops. */
+    state.selected = b;
     recount();
     drawLinks();
     refreshNodeStyles();
     renderAll();
     save();
-    msg("Connection created: " + name + " \u00b7 " + fmtLen(haversine(na, nb)), "ok");
+    msg("Connected: " + name + " \u00b7 " + fmtLen(haversine(na, nb)) +
+      " \u00b7 click the next node to continue, Esc to stop.", "ok");
   }
 
   /* Path names are generated from the configurable path template (default "FROM\u2194TO",
@@ -1601,6 +1604,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
   }
 
   function deleteLink(id) {
+    var link = state.links.filter(function (l) { return l.id === id; })[0];
+    if (!link) return;
+    pushUndo("delete " + link.name);
     state.links = state.links.filter(function (l) { return l.id !== id; });
     if (state.activeLink === id) state.activeLink = null;
     recount();
@@ -1618,6 +1624,73 @@ svg.leaflet-image-layer.leaflet-interactive path {
     });
   }
 
+  /* ---------------- undo ----------------
+     Every destructive or structural edit pushes a snapshot first, so Undo/Ctrl+Z can
+     step back through node deletions, renames, imports and "Clear links" - not just
+     the last connection. */
+
+  var UNDO_LIMIT = 50;
+  var undoStack = [];
+
+  function snapshot() {
+    return {
+      nodes: state.nodes.map(function (n) {
+        return { id: n.id, name: n.name, lat: n.lat, lon: n.lon, alt: n.alt, desc: n.desc, style: n.style || null };
+      }),
+      links: state.links.map(function (l) {
+        return { id: l.id, name: l.name, a: l.a, b: l.b, style: l.style || null };
+      }),
+      seq: state.seq,
+      nodeSeq: state.nodeSeq,
+      selected: state.selected,
+      activeLink: state.activeLink
+    };
+  }
+
+  function pushUndo(label) {
+    undoStack.push({ label: label, snap: snapshot() });
+    if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+    updateUndoButton();
+  }
+
+  function clearUndo() {
+    undoStack = [];
+    updateUndoButton();
+  }
+
+  function updateUndoButton() {
+    var btn = $("btnUndo");
+    if (!btn) return;
+    var top = undoStack[undoStack.length - 1];
+    btn.disabled = !top;
+    btn.title = top ? "Undo: " + top.label + " (Ctrl+Z)" : "Nothing to undo";
+  }
+
+  function undo() {
+    var entry = undoStack.pop();
+    if (!entry) return;
+    var s = entry.snap;
+    state.nodes = s.nodes.map(function (n) {
+      return { id: n.id, name: n.name, lat: n.lat, lon: n.lon, alt: n.alt, desc: n.desc, style: n.style, degree: 0 };
+    });
+    state.byId = {};
+    state.nodes.forEach(function (n) { state.byId[n.id] = n; });
+    state.links = s.links.map(function (l) {
+      return { id: l.id, name: l.name, a: l.a, b: l.b, style: l.style };
+    });
+    state.seq = s.seq;
+    state.nodeSeq = s.nodeSeq;
+    state.selected = state.byId[s.selected] ? s.selected : null;
+    state.activeLink = state.links.some(function (l) { return l.id === s.activeLink; }) ? s.activeLink : null;
+    recount();
+    drawNodes();
+    drawLinks();
+    renderAll();
+    applyFileStyleAvailability();
+    save();
+    updateUndoButton();
+    msg("Undone: " + entry.label, "ok");
+  }
 
   /* ---------------- name dialog ---------------- */
 
@@ -1702,11 +1775,12 @@ svg.leaflet-image-layer.leaflet-interactive path {
       list.appendChild(row);
     });
     $("linkCount").textContent = state.links.length;
-    $("btnExportCsv").disabled = state.links.length === 0;
-    $("btnExportKml").disabled = state.links.length === 0;
-    $("btnUndo").disabled = state.links.length === 0;
+    $("btnExportCsv").disabled = state.nodes.length === 0;
+    $("btnExportKml").disabled = state.nodes.length === 0;
     $("btnClear").disabled = state.links.length === 0;
     $("btnDashboard").disabled = state.nodes.length === 0;
+    $("btnFit").disabled = state.nodes.length === 0;
+    updateUndoButton();
   }
 
   function updateStatus() {
@@ -1891,8 +1965,8 @@ svg.leaflet-image-layer.leaflet-interactive path {
     recount();
     drawNodes();
     drawLinks();
-    var b = L.latLngBounds(nodes.map(function (n) { return [n.lat, n.lon]; }));
-    map.fitBounds(b.pad(0.15));
+    clearUndo();
+    fitToData();
     renderAll();
     save();
     applyFileStyleAvailability();
@@ -2071,6 +2145,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
       id: id, name: applyNodeTemplate(getNodeTemplate(), n),
       lat: latlng.lat, lon: latlng.lng, alt: 0, desc: "", degree: 0
     };
+    pushUndo("add node " + node.name);
     state.nodes.push(node);
     state.byId[node.id] = node;
     drawNodes();
@@ -2084,6 +2159,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     if (!node) return;
     askName("Rename node", "Used to auto-generate path names for its connections.", node.name,
       function (v) {
+        pushUndo("rename " + node.name);
         node.name = v;
         state.links.forEach(function (l) {
           if (l.a === id || l.b === id) l.name = pathName(state.byId[l.a], state.byId[l.b], l.id);
@@ -2104,6 +2180,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
       ? 'Delete node "' + node.name + '" and its ' + linked.length + " connection(s)?"
       : 'Delete node "' + node.name + '"?';
     if (!confirm(q)) return;
+    pushUndo("delete node " + node.name);
     var linkedIds = linked.map(function (l) { return l.id; });
     state.links = state.links.filter(function (l) { return l.a !== id && l.b !== id; });
     state.nodes = state.nodes.filter(function (n) { return n.id !== id; });
@@ -2122,6 +2199,8 @@ svg.leaflet-image-layer.leaflet-interactive path {
     state.addMode = !!on;
     if (state.addMode && state.pathMode) setPathMode(false);
     if (state.addMode) clearSelection();
+    /* Double-click zoom would fight with click-to-place, so it steps aside here. */
+    if (state.addMode) map.doubleClickZoom.disable(); else map.doubleClickZoom.enable();
     $("btnAddNode").textContent = "Add node: " + (state.addMode ? "on" : "off");
     $("btnAddNode").classList.toggle("on", state.addMode);
     $("map").classList.toggle("adding", state.addMode);
@@ -2145,14 +2224,19 @@ svg.leaflet-image-layer.leaflet-interactive path {
     if (state.addMode) {
       hint.textContent = "Add node is on: click anywhere on the map to place a node. Press Esc to stop.";
     } else if (state.pathMode) {
-      hint.textContent = "Add path is on: click a node, then a second node to connect them. Existing paths " +
-        "are click-through while this is on, so crowded nodes stay easy to hit. Press Esc to stop.";
+      hint.textContent = "Add path is on: click a node, then a second node to connect them \u2014 keep clicking " +
+        "to chain a route. Existing paths are click-through while this is on, so crowded nodes stay easy to hit. " +
+        "Press Esc to stop.";
     } else {
       hint.textContent = "Turn on \"Add path\" to connect nodes. With it off, clicking a node just selects it " +
-        "and clicking a path highlights it.";
+        "and clicking a path highlights it. Delete removes the selection, Ctrl+Z undoes, F zooms to fit.";
     }
   }
 
+  function fitToData() {
+    if (!state.nodes.length) { msg("Load a KML or KMZ first.", "err"); return; }
+    map.fitBounds(L.latLngBounds(state.nodes.map(function (n) { return [n.lat, n.lon]; })).pad(0.15));
+  }
 
   function save() {
     try {
@@ -2221,6 +2305,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
   }
 
   function exportCsv() {
+    /* With no connections yet there is nothing to write in the path-shaped CSV, so
+       export the nodes instead rather than handing back an empty file. */
+    if (!state.links.length) { exportNodesCsv(); return; }
     var head = ["path_name", "from_name", "from_lat", "from_lon", "to_name", "to_lat", "to_lon", "length_m", "source_kml"];
     var rows = [head.join(",")];
     state.links.forEach(function (l) {
@@ -2235,6 +2322,17 @@ svg.leaflet-image-layer.leaflet-interactive path {
     msg("CSV exported.", "ok");
   }
 
+  function exportNodesCsv() {
+    var head = ["node_name", "lat", "lon", "alt_m", "connections", "source_kml"];
+    var rows = [head.join(",")];
+    state.nodes.forEach(function (n) {
+      rows.push([
+        n.name, n.lat.toFixed(8), n.lon.toFixed(8), n.alt || 0, n.degree || 0, state.fileName
+      ].map(csvCell).join(","));
+    });
+    download(baseName() + "_nodes.csv", rows.join("\r\n"), "text/csv");
+    msg("No connections yet \u2014 exported a nodes-only CSV.", "ok");
+  }
 
   function importCsv(file) {
     var fr = new FileReader();
@@ -2251,6 +2349,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
           throw new Error("CSV must have the columns exported by this app (path_name, from_name, from_lat, ...).");
         }
         var added = 0, skipped = 0;
+        pushUndo("import CSV");
         rows.slice(1).forEach(function (r) {
           if (!r.length || (r.length === 1 && !r[0])) return;
           var a = findNode(r[ix.from_name], r[ix.from_lat], r[ix.from_lon]);
@@ -2431,14 +2530,11 @@ svg.leaflet-image-layer.leaflet-interactive path {
   });
   $("btnExportCsv").addEventListener("click", exportCsv);
   $("btnExportKml").addEventListener("click", exportKml);
-  $("btnUndo").addEventListener("click", function () {
-    if (!state.links.length) return;
-    deleteLink(state.links[state.links.length - 1].id);
-    msg("Last connection removed.");
-  });
+  $("btnUndo").addEventListener("click", undo);
   $("btnClear").addEventListener("click", function () {
     if (!state.links.length) return;
     if (!confirm("Delete all " + state.links.length + " connections?")) return;
+    pushUndo("clear all connections");
     state.links = [];
     state.activeLink = null;
     recount();
@@ -2446,9 +2542,12 @@ svg.leaflet-image-layer.leaflet-interactive path {
     refreshNodeStyles();
     renderAll();
     save();
+    msg("All connections cleared \u2014 Undo (Ctrl+Z) brings them back.", "ok");
   });
+  $("btnFit").addEventListener("click", fitToData);
   $("btnLabels").addEventListener("click", function () {
     state.labels = !state.labels;
+    lsSet(LABELS_KEY, state.labels ? "1" : "0");
     this.textContent = "Labels: " + (state.labels ? "on" : "off");
     drawNodes();
     drawLinks();
@@ -2502,8 +2601,18 @@ svg.leaflet-image-layer.leaflet-interactive path {
     msg("Naming format updated.", "ok");
   });
 
+  /* Leaflet fires "click" twice for a double-click, which used to drop two stacked
+     nodes; ignore the second one and keep dblclick-zoom out of the way while placing. */
+  var lastAddClick = 0;
+
   map.on("click", function (e) {
-    if (state.addMode) { addNode(e.latlng); return; }
+    if (state.addMode) {
+      var now = Date.now();
+      if (now - lastAddClick < 350) return;
+      lastAddClick = now;
+      addNode(e.latlng);
+      return;
+    }
     if (state.selected) {
       state.selected = null;
       refreshNodeStyles();
@@ -2514,14 +2623,25 @@ svg.leaflet-image-layer.leaflet-interactive path {
   });
 
   document.addEventListener("keydown", function (e) {
-    if (dlg.open) return;
+    if (dlg.open || namingDlg.open || $("dashDlg").open) return;
+    /* Never hijack typing in the filter boxes - Delete and Ctrl+Z belong to the input. */
+    var t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+
     if (e.key === "Escape" && state.addMode) { setAddMode(false); }
     if (e.key === "Escape" && state.pathMode) { setPathMode(false); }
     if (e.key === "Escape" && state.selected) {
       state.selected = null; refreshNodeStyles(); renderNodes(); updateStatus();
     }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
-      e.preventDefault(); $("btnUndo").click();
+      e.preventDefault(); undo(); return;
+    }
+    if (e.key === "Delete" || e.key === "Backspace") {
+      if (state.activeLink) { e.preventDefault(); deleteLink(state.activeLink); msg("Path deleted \u2014 Ctrl+Z to undo.", "ok"); return; }
+      if (state.selected) { e.preventDefault(); deleteNode(state.selected); return; }
+    }
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "f") {
+      e.preventDefault(); fitToData();
     }
   });
 
@@ -2548,7 +2668,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   setBasemap(lsGet(BASEMAP_KEY) || "esristreet", false);
   state.fileStyles = lsGet(FILE_STYLES_KEY) !== "0";
+  state.labels = lsGet(LABELS_KEY) !== "0";
+  $("btnLabels").textContent = "Labels: " + (state.labels ? "on" : "off");
   restore();
+  clearUndo();
   renderAll();
   updateHint();
   applyFileStyleAvailability();

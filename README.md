@@ -42,7 +42,8 @@ click node pairs to connect them (paths are auto-named from a configurable templ
   leave the mode; **Add node** and **Add path** are mutually exclusive.
 - **Add node**: click the button (it turns on, cursor becomes a crosshair), then click
   anywhere on the map to drop a new node there, named from the node template. Click the
-  button again (or press `Esc`) to leave add mode.
+  button again (or press `Esc`) to leave add mode. Double-clicks place a single node, and
+  double-click zoom is suspended while the mode is on.
 - **Rename**/**del** buttons on every row in the Nodes list: rename updates any of that
   node's existing connection names to match; delete removes the node and, after
   confirming, any connections attached to it.
@@ -54,7 +55,15 @@ click node pairs to connect them (paths are auto-named from a configurable templ
   (existing/imported node names are left alone). **Reset to defaults** restores
   `Node {n}` / `FROM↔TO`; **Cancel** discards unsaved edits.
 - Great-circle length per path and total length in the status bar.
-- Delete any connection, **Undo** (Ctrl+Z), **Clear links**, `Esc` cancels a pending selection.
+- **Chain linking**: after connecting two nodes the second one stays selected, so drawing a
+  route A→B→C→D is one click per node. `Esc` (or a click on empty map) ends the chain.
+- **Undo** (Ctrl+Z) steps back through the whole editing history — connections, node
+  adds/renames/deletes, **Clear links** and CSV imports — up to 50 steps. The button's
+  tooltip names what will be undone. Loading a file starts a fresh history.
+- `Delete`/`Backspace` removes the highlighted path, or the selected node (with the usual
+  confirmation). Keyboard shortcuts are ignored while you're typing in the filter boxes.
+- **Zoom to fit** (or press `F`) frames every node in view.
+- `Esc` cancels a pending selection or leaves Add node / Add path.
 - **Dashboard** button: summary cards (nodes, connections, total/average/min/max length,
   average connections per node, unconnected nodes) plus three interactive charts — path
   length distribution, node degree distribution, and the top 10 most-connected nodes.
@@ -67,7 +76,7 @@ click node pairs to connect them (paths are auto-named from a configurable templ
   probes every provider for real reachability on your current network and disables/labels
   any that fail as "(unavailable)"; if your active basemap goes unreachable it automatically
   switches you to a working one and tells you which.
-- Labels toggle for node and path names, plus a metric scale bar.
+- Labels toggle for node and path names, plus a metric scale bar. The toggle is remembered.
 - Work is auto-saved in the browser's local storage, so a reload restores your session.
 - **Import CSV** re-loads a previously exported file and rebuilds the lines by matching
   coordinates (within 1 m) and falling back to node names; path names are regenerated
@@ -81,6 +90,12 @@ path_name,from_name,from_lat,from_lon,to_name,to_lat,to_lon,length_m,source_kml
 
 Coordinates are written with 8 decimals, exactly as read from the KML, so the exported
 paths share the same coordinates as the original nodes.
+
+If you export before drawing any connections, a nodes-only CSV is written instead:
+
+```
+node_name,lat,lon,alt_m,connections,source_kml
+```
 
 ## Exported KML
 
