@@ -23,6 +23,17 @@ click node pairs to connect them (paths are auto-named from a configurable templ
   previously exported KML) and rebuilds the corresponding connections automatically by
   matching each line's two endpoints back to nodes at the same coordinates (within 1 m).
 - Connections are always pairs of nodes; duplicate pairs are rejected.
+- **File styles**: the `<Style>`/`<StyleMap>` definitions in the loaded file are honored when
+  drawing the network — `IconStyle` `<color>` and `<scale>` set each node's color and size,
+  `<Icon><href>` is drawn as the actual marker image (icons packed inside a `.kmz` are
+  extracted and used), and `LineStyle` `<color>`/`<width>` set each path's color and
+  thickness. `StyleMap` follows the `normal` pair, and a `<Style>` written inline on a
+  placemark wins over a `styleUrl`. The **File styles** button switches between the file's
+  own appearance and the app's status palette (blue = unconnected, green = connected); it is
+  disabled for files that define no styles. Selection always stays orange so the node you
+  picked is obvious, and unstyled placemarks keep the app colors. Missing or unreachable
+  icon images fall back to a plain circle instead of a broken image. Exporting KML writes
+  these styles back out, so a load → export → load round-trip keeps the original look.
 - Path names are generated, never typed, from a configurable template (default `FROM↔TO`, e.g. `TOWER A↔TOWER B`).
 - **Add path**: connections are only created while this toggle is on. While it is on,
   existing paths are click-through (non-clickable), so a node with many connections
@@ -75,8 +86,16 @@ paths share the same coordinates as the original nodes.
 
 Contains a `Nodes` folder (the original points) and a `Paths` folder with one
 `LineString` placemark per connection, named `FROM↔TO`. Opens directly in
-Google Earth or QGIS. Loading this file back into the app (via **Load KML…**
+Google Earth or QGIS. Loading this file back into the app (via **Load KML/KMZ…**
 or drag-and-drop) restores both the nodes and the connections.
+
+Styles read from the source file are re-emitted as `<Style>` blocks and referenced per
+placemark, so colors, icon scales, icon hrefs and line widths survive the round-trip.
+Nodes and paths that had no style (including anything you added in the app) use the
+default orange `nodeStyle`/`pathStyle`. This happens regardless of the **File styles**
+button, which only controls what is drawn on screen. Note that an exported `.kml` is a
+plain file, not an archive, so icon `href`s that pointed inside a `.kmz` are written out
+unchanged and will only resolve if those images sit next to the exported file.
 
 ## Notes
 
@@ -92,6 +111,10 @@ or drag-and-drop) restores both the nodes and the connections.
   next time.
 - `.kmz` files are unzipped in the browser (no upload, no extra libraries) and the KML inside
   is loaded — `doc.kml` is preferred, otherwise the shallowest `.kml` entry in the archive.
-  Other contents of the archive (images, overlays, styles) are ignored. Very old browsers
-  without `DecompressionStream` cannot inflate compressed KMZ; unzip the file manually there.
+  Image files in the archive are extracted too, so `IconStyle` icons display; everything else
+  (overlays, nested network links) is ignored. Very old browsers without `DecompressionStream`
+  cannot inflate compressed KMZ; unzip the file manually there.
+- The browser remembers the last session, including node/path colors and sizes. Icons that
+  came from a `.kmz` are the one exception — they live only in memory, so after a reload
+  those nodes fall back to colored circles until the `.kmz` is loaded again.
 - A BOM or leading whitespace in the KML is handled automatically.

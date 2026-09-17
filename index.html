@@ -705,6 +705,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   button.danger:hover { border-color: var(--danger); color: var(--danger); }
   button.on { background: var(--accent-2); border-color: var(--accent-2); color: #06121c; font-weight: 600; }
   #map.adding, #map.linking { cursor: crosshair; }
+  .node-icon.sel { filter: drop-shadow(0 0 3px #ff9f43) drop-shadow(0 0 6px #ff9f43); }
   .spacer { flex: 1; }
   #main { flex: 1; display: flex; min-height: 0; }
   #sidebar {
@@ -813,6 +814,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   <select id="basemap" title="Basemap"></select>
   <button id="btnRecheckMaps" title="Re-test which map providers your network can reach">Recheck maps</button>
   <button id="btnLabels">Labels: on</button>
+  <button id="btnFileStyles" title="Use the colors, icon sizes and line widths defined in the loaded KML/KMZ">File styles: on</button>
   <button id="btnUndo" disabled>Undo</button>
   <button id="btnClear" class="danger" disabled>Clear links</button>
   <button id="btnDashboard" disabled>Dashboard</button>
@@ -943,7 +945,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
     seq: 1,           // next link sequence number
     nodeSeq: 1,       // next manually-added node sequence number
     addMode: false,   // "Add node": next map click places a node
-    pathMode: false   // "Add path": clicking two nodes connects them; paths are click-through
+    pathMode: false,  // "Add path": clicking two nodes connects them; paths are click-through
+    fileStyles: true, // honor <Style> from the loaded KML/KMZ instead of the app palette
+    assets: []        // blob URLs created for icons extracted from a KMZ
   };
 
   var NODE_TEMPLATE_KEY = "connecting-paths-node-template";
@@ -995,6 +999,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   var BASEMAP_KEY = "connecting-paths-basemap";
   var CUSTOM_KEY = "connecting-paths-custom-tiles";
+  var FILE_STYLES_KEY = "connecting-paths-file-styles";
   var currentBase = null;
   var basemapSel = document.getElementById("basemap");
 
@@ -1184,17 +1189,162 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   function textOf(el) { return el ? (el.textContent || "").trim() : ""; }
 
-  function parseKml(text) {
+  /* ---------------- KML style parsing ----------------
+     KML colors are aabbggrr hex (alpha first, byte-reversed RGB), so they need
+     flipping before they can be used as CSS colors. */
+
+  function kmlColor(raw) {
+    if (!raw) return null;
+    var s = String(raw).replace(/^#/, "").trim();
+    if (/^[0-9a-fA-F]{6}$/.test(s)) s = "ff" + s;
+    if (!/^[0-9a-fA-F]{8}$/.test(s)) return null;
+    return {
+      css: "#" + s.slice(6, 8) + s.slice(4, 6) + s.slice(2, 4),
+      opacity: parseInt(s.slice(0, 2), 16) / 255
+    };
+  }
+
+  function readStyleEl(el) {
+    var st = {};
+    var is = childByName(el, "IconStyle");
+    if (is) {
+      var iconEl = childByName(is, "Icon");
+      var scale = parseFloat(textOf(childByName(is, "scale")));
+      st.icon = {
+        color: textOf(childByName(is, "color")) || null,
+        scale: isFinite(scale) && scale > 0 ? scale : null,
+        href: iconEl ? (textOf(childByName(iconEl, "href")) || null) : null
+      };
+    }
+    var ls = childByName(el, "LineStyle");
+    if (ls) {
+      var width = parseFloat(textOf(childByName(ls, "width")));
+      st.line = {
+        color: textOf(childByName(ls, "color")) || null,
+        width: isFinite(width) && width > 0 ? width : null
+      };
+    }
+    return (st.icon || st.line) ? st : null;
+  }
+
+  function styleKey(url) {
+    var s = String(url || "").trim();
+    if (!s) return "";
+    /* Ignore the document part of "doc.kml#style" references. */
+    var hash = s.indexOf("#");
+    return hash >= 0 ? s.slice(hash) : "#" + s;
+  }
+
+  function collectStyles(doc) {
+    var styles = {};
+    descendantsByName(doc, "Style").forEach(function (el) {
+      var id = el.getAttribute("id");
+      if (!id) return;
+      var st = readStyleEl(el);
+      if (st) styles["#" + id] = st;
+    });
+    /* A StyleMap selects between normal/highlight styles; the normal one is what
+       Google Earth shows when nothing is hovered, so that is what we follow. */
+    descendantsByName(doc, "StyleMap").forEach(function (sm) {
+      var id = sm.getAttribute("id");
+      if (!id) return;
+      var pairs = descendantsByName(sm, "Pair"), chosen = null;
+      pairs.forEach(function (p) {
+        if (!chosen) chosen = p;
+        if (textOf(childByName(p, "key")) === "normal") chosen = p;
+      });
+      if (!chosen) return;
+      var inline = childByName(chosen, "Style");
+      if (inline) {
+        var st = readStyleEl(inline);
+        if (st) styles["#" + id] = st;
+      } else {
+        var ref = styleKey(textOf(childByName(chosen, "styleUrl")));
+        if (ref) styles["#" + id] = { ref: ref };
+      }
+    });
+    return styles;
+  }
+
+  function resolveStyle(styles, url) {
+    var key = styleKey(url), seen = {};
+    while (key && styles[key] && !seen[key]) {
+      seen[key] = true;
+      var st = styles[key];
+      if (!st.ref) return st;
+      key = st.ref;
+    }
+    return null;
+  }
+
+  function placemarkStyle(pm, styles) {
+    var inline = childByName(pm, "Style");
+    if (inline) {
+      var st = readStyleEl(inline);
+      if (st) return st;
+    }
+    return resolveStyle(styles, textOf(childByName(pm, "styleUrl")));
+  }
+
+  /* Icon hrefs inside a KMZ are archive-relative; map them onto the blob URLs
+     extracted from the archive. Absolute http(s) icons are used as-is. */
+  function resolveHref(href, assets) {
+    if (!href) return null;
+    if (/^(https?:|data:|blob:)/i.test(href)) return href;
+    if (!assets) return null;
+    var clean = String(href).replace(/^\.?\//, "").replace(/\\/g, "/");
+    try { clean = decodeURIComponent(clean); } catch (e) { /* keep raw */ }
+    var lower = clean.toLowerCase();
+    var keys = Object.keys(assets);
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i].toLowerCase() === lower) return assets[keys[i]];
+    }
+    /* Fall back to a basename match: some files reference icons by a path that
+       does not exactly mirror the archive layout. */
+    var base = lower.split("/").pop();
+    for (var j = 0; j < keys.length; j++) {
+      if (keys[j].toLowerCase().split("/").pop() === base) return assets[keys[j]];
+    }
+    return null;
+  }
+
+  function nodeStyleFrom(st, assets) {
+    if (!st || !st.icon) return null;
+    var c = kmlColor(st.icon.color);
+    var out = {
+      color: c ? c.css : null,
+      opacity: c ? c.opacity : null,
+      scale: st.icon.scale || null,
+      href: st.icon.href || null,
+      iconUrl: resolveHref(st.icon.href, assets)
+    };
+    return (out.color || out.scale || out.iconUrl) ? out : null;
+  }
+
+  function linkStyleFrom(st) {
+    if (!st || !st.line) return null;
+    var c = kmlColor(st.line.color);
+    var out = {
+      color: c ? c.css : null,
+      opacity: c ? c.opacity : null,
+      width: st.line.width || null
+    };
+    return (out.color || out.width) ? out : null;
+  }
+
+  function parseKml(text, assets) {
     text = String(text).replace(/^[\uFEFF\s]+/, "");
     var doc = new DOMParser().parseFromString(text, "application/xml");
     if (doc.getElementsByTagName("parsererror").length) throw new Error("This file is not valid XML/KML.");
 
+    var styles = collectStyles(doc);
     var placemarks = descendantsByName(doc, "Placemark");
     var nodes = [], n = 0;
 
     placemarks.forEach(function (pm) {
       var name = textOf(childByName(pm, "name"));
       var desc = textOf(childByName(pm, "description"));
+      var style = nodeStyleFrom(placemarkStyle(pm, styles), assets);
       var points = descendantsByName(pm, "Point");
       points.forEach(function (pt, idx) {
         var raw = textOf(childByName(pt, "coordinates"));
@@ -1208,7 +1358,8 @@ svg.leaflet-image-layer.leaflet-interactive path {
           name: name || ("Node " + n) + (points.length > 1 ? " #" + (idx + 1) : ""),
           lat: lat, lon: lon,
           alt: parts.length > 2 ? parseFloat(parts[2]) || 0 : 0,
-          desc: desc
+          desc: desc,
+          style: style
         });
       });
     });
@@ -1220,6 +1371,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
        back to the parsed nodes (within 1 m), same tolerance used by CSV import. */
     var links = [], seenPairs = {};
     placemarks.forEach(function (pm) {
+      var style = linkStyleFrom(placemarkStyle(pm, styles));
       var lines = descendantsByName(pm, "LineString");
       lines.forEach(function (ls) {
         var raw = textOf(childByName(ls, "coordinates"));
@@ -1235,7 +1387,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
         var key = pairKey(a.id, b.id);
         if (seenPairs[key]) return;
         seenPairs[key] = true;
-        links.push({ a: a.id, b: b.id });
+        links.push({ a: a.id, b: b.id, style: style });
       });
     });
 
@@ -1253,22 +1405,72 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   /* ---------------- rendering ---------------- */
 
+  /* Icon images referenced by an IconStyle are preloaded before use so a missing or
+     unreachable icon falls back to the plain circle marker instead of a broken image. */
+  var iconStatus = {};
+
+  function preloadIcons(urls, done) {
+    var pending = urls.filter(function (u) { return u && !(u in iconStatus); });
+    if (!pending.length) { done(false); return; }
+    var left = pending.length, changed = false;
+    pending.forEach(function (url) {
+      var img = new Image();
+      img.onload = function () {
+        iconStatus[url] = { w: img.naturalWidth || 32, h: img.naturalHeight || 32 };
+        changed = true;
+        if (!--left) done(changed);
+      };
+      img.onerror = function () {
+        iconStatus[url] = null;
+        if (!--left) done(changed);
+      };
+      img.src = url;
+    });
+  }
+
+  function styleOf(node) { return state.fileStyles ? node.style : null; }
+
+  function nodeIconUrl(node) {
+    var st = styleOf(node);
+    return (st && st.iconUrl && iconStatus[st.iconUrl]) ? st.iconUrl : null;
+  }
+
   function nodeStyle(node) {
     var isSel = state.selected === node.id;
     var used = node.degree > 0;
+    var st = styleOf(node);
+    var base = (st && st.color) ? st.color : used ? "#35c46b" : "#3fa7ff";
+    var scale = (st && st.scale) ? Math.max(0.3, Math.min(4, st.scale)) : 1;
     return {
-      radius: isSel ? 9 : 6,
-      color: isSel ? "#ff9f43" : used ? "#35c46b" : "#3fa7ff",
+      radius: (isSel ? 9 : 6) * scale,
+      color: isSel ? "#ff9f43" : base,
       weight: 2,
-      fillColor: isSel ? "#ff9f43" : used ? "#35c46b" : "#3fa7ff",
-      fillOpacity: isSel ? 0.9 : 0.55
+      fillColor: isSel ? "#ff9f43" : base,
+      fillOpacity: isSel ? 0.9 : (st && st.opacity != null ? Math.max(0.15, st.opacity) : 0.55)
     };
+  }
+
+  function nodeIcon(node, url) {
+    var st = styleOf(node);
+    var scale = (st && st.scale) ? Math.max(0.3, Math.min(4, st.scale)) : 1;
+    var dim = iconStatus[url];
+    var w = Math.round(Math.min(dim.w, 32) * scale), h = Math.round(Math.min(dim.h, 32) * scale);
+    return L.icon({
+      iconUrl: url,
+      iconSize: [w, h],
+      iconAnchor: [w / 2, h / 2],
+      tooltipAnchor: [0, -h / 2],
+      className: "node-icon" + (state.selected === node.id ? " sel" : "")
+    });
   }
 
   function drawNodes() {
     nodeLayer.clearLayers();
     state.nodes.forEach(function (node) {
-      var m = L.circleMarker([node.lat, node.lon], nodeStyle(node));
+      var url = nodeIconUrl(node);
+      var m = url
+        ? L.marker([node.lat, node.lon], { icon: nodeIcon(node, url), keyboard: false })
+        : L.circleMarker([node.lat, node.lon], nodeStyle(node));
       m.on("click", function (e) {
         L.DomEvent.stopPropagation(e);
         if (state.addMode) { addNode(e.latlng); return; }
@@ -1284,18 +1486,23 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   function refreshNodeStyles() {
     state.nodes.forEach(function (node) {
-      if (node.marker) node.marker.setStyle(nodeStyle(node));
+      if (!node.marker) return;
+      if (node.marker.setStyle) { node.marker.setStyle(nodeStyle(node)); return; }
+      var el = node.marker.getElement();
+      if (el) el.classList.toggle("sel", state.selected === node.id);
     });
   }
 
   function drawLink(l) {
     var a = state.byId[l.a], b = state.byId[l.b];
+    var st = state.fileStyles ? l.style : null;
+    var active = state.activeLink === l.id;
     /* While "Add path" is on, paths are non-interactive so clicks fall through to the
        nodes underneath — otherwise a node with many connections is impossible to hit. */
     var line = L.polyline([[a.lat, a.lon], [b.lat, b.lon]], {
-      color: state.activeLink === l.id ? "#ff9f43" : "#3fa7ff",
-      weight: state.activeLink === l.id ? 5 : 3,
-      opacity: 0.9,
+      color: active ? "#ff9f43" : (st && st.color) ? st.color : "#3fa7ff",
+      weight: (st && st.width ? st.width : 3) + (active ? 2 : 0),
+      opacity: active ? 0.9 : (st && st.opacity != null ? Math.max(0.15, st.opacity) : 0.9),
       interactive: !state.pathMode
     });
     if (!state.pathMode) {
@@ -1410,6 +1617,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
       if (state.byId[l.b]) state.byId[l.b].degree++;
     });
   }
+
 
   /* ---------------- name dialog ---------------- */
 
@@ -1675,7 +1883,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
     state.fileName = fileName;
     (links || []).forEach(function (l) {
       var linkId = "l" + (state.seq++);
-      state.links.push({ id: linkId, name: pathName(state.byId[l.a], state.byId[l.b], linkId), a: l.a, b: l.b });
+      state.links.push({
+        id: linkId, name: pathName(state.byId[l.a], state.byId[l.b], linkId),
+        a: l.a, b: l.b, style: l.style || null
+      });
     });
     recount();
     drawNodes();
@@ -1684,7 +1895,32 @@ svg.leaflet-image-layer.leaflet-interactive path {
     map.fitBounds(b.pad(0.15));
     renderAll();
     save();
+    applyFileStyleAvailability();
     msg(nodes.length + " nodes loaded" + (state.links.length ? ", " + state.links.length + " connections restored." : "."), "ok");
+    /* Icons load asynchronously; redraw once they are known to be usable. */
+    preloadIcons(nodes.map(function (n) { return n.style && n.style.iconUrl; }), function (changed) {
+      if (changed) drawNodes();
+    });
+  }
+
+  function hasFileStyles() {
+    return state.nodes.some(function (n) { return !!n.style; }) ||
+      state.links.some(function (l) { return !!l.style; });
+  }
+
+  function applyFileStyleAvailability() {
+    var btn = $("btnFileStyles");
+    if (!btn) return;
+    btn.disabled = !hasFileStyles();
+    btn.textContent = "File styles: " + (state.fileStyles ? "on" : "off");
+    btn.classList.toggle("on", state.fileStyles && !btn.disabled);
+  }
+
+  function releaseAssets() {
+    state.assets.forEach(function (url) {
+      try { URL.revokeObjectURL(url); } catch (e) { /* ignore */ }
+    });
+    state.assets = [];
   }
 
   function readKmlFile(file) {
@@ -1695,6 +1931,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
       if (/^PK\x03\x04/.test(text)) { readKmzFile(file); return; }
       try {
         var parsed = parseKml(text);
+        releaseAssets();
         loadNodes(parsed.nodes, file.name, parsed.links);
       } catch (err) {
         msg(err.message, "err");
@@ -1769,6 +2006,35 @@ svg.leaflet-image-layer.leaflet-interactive path {
     return Promise.reject(new Error("Unsupported compression inside this KMZ (method " + entry.method + ")."));
   }
 
+  var IMAGE_TYPES = {
+    png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+    bmp: "image/bmp", svg: "image/svg+xml", webp: "image/webp"
+  };
+
+  /* Icons packed alongside the KML in a KMZ are turned into blob URLs so IconStyle
+     hrefs like "files/tower.png" can actually be displayed. */
+  function extractKmzImages(buf, entries) {
+    var imgs = entries.filter(function (e) {
+      var ext = (e.name.split(".").pop() || "").toLowerCase();
+      return IMAGE_TYPES[ext] && !/^__MACOSX[\/\\]/.test(e.name) && !/[\/\\]$/.test(e.name);
+    });
+    return Promise.all(imgs.map(function (e) {
+      return zipEntryBytes(buf, e).then(function (bytes) {
+        var ext = (e.name.split(".").pop() || "").toLowerCase();
+        /* Copy into a standalone buffer: bytes may be a view onto the whole archive. */
+        return { name: e.name.replace(/\\/g, "/"), url: URL.createObjectURL(new Blob([bytes.slice()], { type: IMAGE_TYPES[ext] })) };
+      }).catch(function () { return null; });
+    })).then(function (results) {
+      var assets = {}, urls = [];
+      results.forEach(function (r) {
+        if (!r) return;
+        assets[r.name] = r.url;
+        urls.push(r.url);
+      });
+      return { assets: assets, urls: urls };
+    });
+  }
+
   function readKmzFile(file) {
     function fail(err) {
       var m = err && err.message ? err.message : "Could not read " + file.name + ".";
@@ -1780,12 +2046,16 @@ svg.leaflet-image-layer.leaflet-interactive path {
     fr.onload = function () {
       try {
         var buf = fr.result;
-        var entry = pickKmlEntry(zipEntries(buf));
+        var entries = zipEntries(buf);
+        var entry = pickKmlEntry(entries);
         if (!entry) throw new Error("No .kml file was found inside this KMZ.");
-        zipEntryBytes(buf, entry).then(function (bytes) {
-          var parsed = parseKml(utf8(bytes));
-          loadNodes(parsed.nodes, file.name, parsed.links);
-        }).catch(fail);
+        Promise.all([zipEntryBytes(buf, entry), extractKmzImages(buf, entries)])
+          .then(function (res) {
+            var parsed = parseKml(utf8(res[0]), res[1].assets);
+            releaseAssets();
+            state.assets = res[1].urls;
+            loadNodes(parsed.nodes, file.name, parsed.links);
+          }).catch(fail);
       } catch (err) { fail(err); }
     };
     fr.readAsArrayBuffer(file);
@@ -1883,6 +2153,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     }
   }
 
+
   function save() {
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify({
@@ -1890,11 +2161,27 @@ svg.leaflet-image-layer.leaflet-interactive path {
         seq: state.seq,
         nodeSeq: state.nodeSeq,
         nodes: state.nodes.map(function (n) {
-          return { id: n.id, name: n.name, lat: n.lat, lon: n.lon, alt: n.alt, desc: n.desc };
+          return {
+            id: n.id, name: n.name, lat: n.lat, lon: n.lon, alt: n.alt, desc: n.desc,
+            style: persistableNodeStyle(n.style)
+          };
         }),
-        links: state.links.map(function (l) { return { id: l.id, name: l.name, a: l.a, b: l.b }; })
+        links: state.links.map(function (l) {
+          return { id: l.id, name: l.name, a: l.a, b: l.b, style: l.style || null };
+        })
       }));
     } catch (e) { /* storage full or blocked - ignore */ }
+  }
+
+  /* Blob URLs for KMZ icons die with the page, so only the archive-relative href is
+     persisted; colors and sizes still survive a reload. */
+  function persistableNodeStyle(st) {
+    if (!st) return null;
+    return {
+      color: st.color || null, opacity: st.opacity == null ? null : st.opacity,
+      scale: st.scale || null, href: st.href || null,
+      iconUrl: (st.iconUrl && st.iconUrl.indexOf("blob:") !== 0) ? st.iconUrl : null
+    };
   }
 
   function restore() {
@@ -1917,6 +2204,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
       drawLinks();
       map.fitBounds(L.latLngBounds(state.nodes.map(function (n) { return [n.lat, n.lon]; })).pad(0.15));
       renderAll();
+      applyFileStyleAvailability();
+      preloadIcons(state.nodes.map(function (n) { return n.style && n.style.iconUrl; }), function (changed) {
+        if (changed) drawNodes();
+      });
       msg("Restored previous session (" + state.nodes.length + " nodes, " + state.links.length + " links).");
       return true;
     } catch (e) { return false; }
@@ -1943,6 +2234,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     download(baseName() + "_paths.csv", rows.join("\r\n"), "text/csv");
     msg("CSV exported.", "ok");
   }
+
 
   function importCsv(file) {
     var fr = new FileReader();
@@ -2026,27 +2318,78 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   /* ---------------- KML export ---------------- */
 
+  /* Styles read from the loaded file are written back out so a round-trip keeps the
+     original look; anything without a file style falls back to the app defaults. */
+  function cssToKmlColor(css, opacity) {
+    var m = /^#?([0-9a-fA-F]{6})$/.exec(String(css || ""));
+    if (!m) return null;
+    var hex = m[1];
+    var a = Math.round(Math.max(0, Math.min(1, opacity == null ? 1 : opacity)) * 255);
+    return (a < 16 ? "0" : "") + a.toString(16) +
+      hex.slice(4, 6) + hex.slice(2, 4) + hex.slice(0, 2);
+  }
+
+  function styleRegistry() {
+    var blocks = [], ids = {};
+
+    function add(sig, xml) {
+      if (ids[sig]) return ids[sig];
+      var id = "s" + (blocks.length + 1);
+      ids[sig] = id;
+      blocks.push('<Style id="' + id + '">' + xml + "</Style>");
+      return id;
+    }
+
+    return {
+      blocks: function () { return blocks; },
+      node: function (st) {
+        if (!st) return null;
+        var color = cssToKmlColor(st.color, st.opacity);
+        var parts = "";
+        if (color) parts += "<color>" + color + "</color>";
+        if (st.scale) parts += "<scale>" + st.scale + "</scale>";
+        if (st.href) parts += "<Icon><href>" + esc(st.href) + "</href></Icon>";
+        if (!parts) return null;
+        return add("i|" + color + "|" + st.scale + "|" + st.href, "<IconStyle>" + parts + "</IconStyle>");
+      },
+      link: function (st) {
+        if (!st) return null;
+        var color = cssToKmlColor(st.color, st.opacity);
+        var parts = "";
+        if (color) parts += "<color>" + color + "</color>";
+        if (st.width) parts += "<width>" + st.width + "</width>";
+        if (!parts) return null;
+        return add("l|" + color + "|" + st.width, "<LineStyle>" + parts + "</LineStyle>");
+      }
+    };
+  }
+
   function exportKml() {
     var out = [];
+    var reg = styleRegistry();
+    var nodeRefs = state.nodes.map(function (n) { return reg.node(n.style); });
+    var linkRefs = state.links.map(function (l) { return reg.link(l.style); });
+
     out.push('<?xml version="1.0" encoding="UTF-8"?>');
     out.push('<kml xmlns="http://www.opengis.net/kml/2.2"><Document>');
     out.push("<name>" + esc(baseName() + " paths") + "</name>");
     out.push('<Style id="pathStyle"><LineStyle><color>ffff7f3f</color><width>3</width></LineStyle></Style>');
     out.push('<Style id="nodeStyle"><IconStyle><color>ffff7f3f</color><scale>0.9</scale></IconStyle></Style>');
+    reg.blocks().forEach(function (b) { out.push(b); });
 
     out.push("<Folder><name>Nodes</name>");
-    state.nodes.forEach(function (n) {
-      out.push("<Placemark><name>" + esc(n.name) + "</name><styleUrl>#nodeStyle</styleUrl>" +
+    state.nodes.forEach(function (n, i) {
+      out.push("<Placemark><name>" + esc(n.name) + "</name><styleUrl>#" + (nodeRefs[i] || "nodeStyle") + "</styleUrl>" +
         "<Point><coordinates>" + n.lon + "," + n.lat + "," + (n.alt || 0) + "</coordinates></Point></Placemark>");
     });
     out.push("</Folder>");
 
     out.push("<Folder><name>Paths</name>");
-    state.links.forEach(function (l) {
+    state.links.forEach(function (l, i) {
       var a = state.byId[l.a], b = state.byId[l.b];
       out.push("<Placemark><name>" + esc(l.name) + "</name>" +
         "<description>" + esc(a.name + " -> " + b.name + " (" + fmtLen(linkLength(l)) + ")") + "</description>" +
-        "<styleUrl>#pathStyle</styleUrl><LineString><tessellate>1</tessellate><coordinates>" +
+        "<styleUrl>#" + (linkRefs[i] || "pathStyle") + "</styleUrl><LineString><tessellate>1</tessellate><coordinates>" +
         a.lon + "," + a.lat + "," + (a.alt || 0) + " " +
         b.lon + "," + b.lat + "," + (b.alt || 0) +
         "</coordinates></LineString></Placemark>");
@@ -2109,6 +2452,16 @@ svg.leaflet-image-layer.leaflet-interactive path {
     this.textContent = "Labels: " + (state.labels ? "on" : "off");
     drawNodes();
     drawLinks();
+  });
+  $("btnFileStyles").addEventListener("click", function () {
+    state.fileStyles = !state.fileStyles;
+    lsSet(FILE_STYLES_KEY, state.fileStyles ? "1" : "0");
+    applyFileStyleAvailability();
+    drawNodes();
+    drawLinks();
+    msg(state.fileStyles
+      ? "Showing the colors, sizes and widths from the loaded file."
+      : "Showing the app palette (blue/green by connection status).", "ok");
   });
   $("nodeSearch").addEventListener("input", renderNodes);
   $("linkSearch").addEventListener("input", renderLinks);
@@ -2194,9 +2547,11 @@ svg.leaflet-image-layer.leaflet-interactive path {
   });
 
   setBasemap(lsGet(BASEMAP_KEY) || "esristreet", false);
+  state.fileStyles = lsGet(FILE_STYLES_KEY) !== "0";
   restore();
   renderAll();
   updateHint();
+  applyFileStyleAvailability();
   checkAllBasemaps();
 })();
 </script>
