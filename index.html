@@ -705,6 +705,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   button.danger:hover { border-color: var(--danger); color: var(--danger); }
   button.on { background: var(--accent-2); border-color: var(--accent-2); color: #06121c; font-weight: 600; }
   #map.adding, #map.linking { cursor: crosshair; }
+  #map.node-dragging, #map.node-dragging * { cursor: grabbing !important; }
   .node-icon.sel { filter: drop-shadow(0 0 3px #ff9f43) drop-shadow(0 0 6px #ff9f43); }
   .spacer { flex: 1; }
   #main { flex: 1; display: flex; min-height: 0; }
@@ -1473,8 +1474,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
       var m = url
         ? L.marker([node.lat, node.lon], { icon: nodeIcon(node, url), keyboard: false })
         : L.circleMarker([node.lat, node.lon], nodeStyle(node));
+      m.on("mousedown", function (e) { beginNodeDrag(node, m, e); });
       m.on("click", function (e) {
         L.DomEvent.stopPropagation(e);
+        if (suppressNodeClick) { suppressNodeClick = false; return; }
         if (state.addMode) { addNode(e.latlng); return; }
         pickNode(node.id);
       });
@@ -1484,6 +1487,61 @@ svg.leaflet-image-layer.leaflet-interactive path {
       m.addTo(nodeLayer);
       node.marker = m;
     });
+  }
+
+  /* ---------------- moving nodes ---------------- */
+
+  /* A click and a drag start the same way (mousedown on a node), so the first few
+     pixels of movement are absorbed as a threshold before it commits to a drag -
+     that keeps plain node selection/clicking exactly as responsive as before. */
+  var suppressNodeClick = false;
+
+  function updateLinksForNode(id) {
+    state.links.forEach(function (l) {
+      if (!l.line || (l.a !== id && l.b !== id)) return;
+      var a = state.byId[l.a], b = state.byId[l.b];
+      l.line.setLatLngs([[a.lat, a.lon], [b.lat, b.lon]]);
+    });
+  }
+
+  function beginNodeDrag(node, marker, downEvt) {
+    L.DomEvent.stop(downEvt);
+    suppressNodeClick = false; // a stray flag from an interrupted previous drag shouldn't eat this click
+    var startPoint = downEvt.containerPoint;
+    var dragging = false;
+
+    function onMove(e) {
+      if (!dragging) {
+        if (startPoint.distanceTo(e.containerPoint) < 4) return;
+        dragging = true;
+        pushUndo("move " + node.name);
+        map.dragging.disable();
+        $("map").classList.add("node-dragging");
+      }
+      node.lat = e.latlng.lat;
+      node.lon = e.latlng.lng;
+      marker.setLatLng(e.latlng);
+      updateLinksForNode(node.id);
+    }
+
+    function onUp() {
+      map.off("mousemove", onMove);
+      map.off("mouseup", onUp);
+      if (!dragging) return;
+      map.dragging.enable();
+      $("map").classList.remove("node-dragging");
+      suppressNodeClick = true;
+      recount();
+      renderNodes();
+      renderLinks();
+      updateStatus();
+      refreshDashboardIfOpen();
+      save();
+      msg("Moved " + node.name + " \u2014 Ctrl+Z to undo.", "ok");
+    }
+
+    map.on("mousemove", onMove);
+    map.on("mouseup", onUp);
   }
 
   function refreshNodeStyles() {
@@ -1521,6 +1579,12 @@ svg.leaflet-image-layer.leaflet-interactive path {
   function drawLinks() {
     linkLayer.clearLayers();
     state.links.forEach(drawLink);
+    /* Paths and un-iconed nodes share the same canvas, and paths are added after
+       (so drawn on top) — pull the node circles back to the front so a node is
+       always the thing you grab, even where a path's endpoint sits right on it. */
+    state.nodes.forEach(function (n) {
+      if (n.marker && typeof n.marker.bringToFront === "function") n.marker.bringToFront();
+    });
   }
 
   /* ---------------- selection & linking ---------------- */
@@ -2606,6 +2670,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   var lastAddClick = 0;
 
   map.on("click", function (e) {
+    if (suppressNodeClick) { suppressNodeClick = false; return; }
     if (state.addMode) {
       var now = Date.now();
       if (now - lastAddClick < 350) return;
