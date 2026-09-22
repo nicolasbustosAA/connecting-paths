@@ -49,6 +49,13 @@ name and exact lat/lon instead of clicking the map — handy for placing a node 
 surveyed position or one you don't currently see on screen. It's pre-filled with the
 current map center and the next auto-generated name, both of which you can overwrite.
 
+**Copy style** / **Paste style** let you match one node's look onto others one at a time,
+without opening the Bulk style dialog: select a single node and **Copy style** grabs its
+current color, opacity, icon scale and image (whatever's actually showing, file style or
+your own override); select any other node — or several, or a brand new one you just
+placed — and **Paste style** applies it as that node's own style, fully replacing whatever
+it had before. Undoable like any other edit.
+
 ### Bulk style
 
 **Bulk style…** applies a color, opacity, icon scale (nodes) or line width (paths) to

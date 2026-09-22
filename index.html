@@ -879,6 +879,8 @@ svg.leaflet-image-layer.leaflet-interactive path {
   </div>
   <button id="btnMerge" title="Merge the two selected nodes into one, keeping the more-connected one" disabled>Merge nodes</button>
   <button id="btnAddNodeCoord" title="Add a new node by typing its exact latitude and longitude" disabled>Add by coordinates&hellip;</button>
+  <button id="btnCopyStyle" title="Copy the selected node's color, opacity, icon scale and image" disabled>Copy style</button>
+  <button id="btnPasteStyle" title="Apply the copied style to every selected node" disabled>Paste style</button>
   <button id="btnNaming" title="Set the auto-naming format for nodes and paths">Naming&hellip;</button>
   <button id="btnBulkStyle" title="Apply a color, opacity, scale or width to many nodes or paths at once" disabled>Bulk style&hellip;</button>
   <span class="spacer"></span>
@@ -1737,10 +1739,18 @@ svg.leaflet-image-layer.leaflet-interactive path {
     selectLinksOnly([id]);
   }
 
+  var styleClipboard = null;
+
   function updateMergeButton() {
     var btn = $("btnMerge");
     if (!btn) return;
     btn.disabled = !(state.selection.nodes.length === 2 && state.selection.links.length === 0);
+    /* Copy needs exactly one node selected (the source); Paste needs at least one
+       selected node and something already copied. Gated here since this runs
+       everywhere selection/nodes change (renderAll, setTool, refreshSelectionUI). */
+    var copyBtn = $("btnCopyStyle"), pasteBtn = $("btnPasteStyle");
+    if (copyBtn) copyBtn.disabled = state.selection.nodes.length !== 1;
+    if (pasteBtn) pasteBtn.disabled = !styleClipboard || state.selection.nodes.length === 0;
   }
 
   function nodeLabelHidden(name) {
@@ -2319,6 +2329,45 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
     map.on("mousemove", onMove);
     map.on("mouseup", onUp);
+  }
+
+  /* ---------------- copy/paste node style ---------------- */
+
+  /* Copies the node's current *effective* appearance (file style merged with any
+     bulk/manual override, whichever is actually showing) rather than just its raw
+     userStyle - that way "copy" always grabs what you see, even if the node has no
+     override of its own and is just using the file's or the app's default look. */
+  function copyStyleFromNode(id) {
+    var node = state.byId[id];
+    if (!node) return;
+    var st = styleOf(node) || {};
+    styleClipboard = {
+      color: st.color != null ? st.color : null,
+      opacity: st.opacity != null ? st.opacity : null,
+      scale: st.scale != null ? st.scale : null,
+      href: st.href != null ? st.href : null,
+      iconUrl: st.iconUrl != null ? st.iconUrl : null
+    };
+    updateMergeButton();
+    msg("Style copied from " + node.name + ".", "ok");
+  }
+
+  function pasteStyleToSelection() {
+    if (!styleClipboard) return;
+    var ids = state.selection.nodes.slice();
+    if (!ids.length) { msg("Select at least one node to paste the style onto.", "err"); return; }
+    pushUndo("paste style");
+    ids.forEach(function (id) {
+      var node = state.byId[id];
+      if (!node) return;
+      /* Full replace, same "reset-then-apply" semantics as Bulk style Apply - a
+         pasted style shouldn't have to fight with whatever was set before it. */
+      node.userStyle = Object.assign({}, styleClipboard);
+    });
+    drawNodes();
+    renderAll();
+    save();
+    msg("Style pasted onto " + ids.length + " node" + (ids.length === 1 ? "" : "s") + ".", "ok", "Undo", undo);
   }
 
   function mergeSelectedNodes() {
@@ -3750,6 +3799,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
   });
   $("btnMerge").addEventListener("click", mergeSelectedNodes);
   $("btnAddNodeCoord").addEventListener("click", openAddNodeDlg);
+  $("btnCopyStyle").addEventListener("click", function () {
+    if (state.selection.nodes.length === 1) copyStyleFromNode(state.selection.nodes[0]);
+  });
+  $("btnPasteStyle").addEventListener("click", pasteStyleToSelection);
   $("nodeSearch").addEventListener("input", renderNodes);
   $("linkSearch").addEventListener("input", renderLinks);
 
