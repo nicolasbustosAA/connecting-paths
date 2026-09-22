@@ -831,10 +831,12 @@ svg.leaflet-image-layer.leaflet-interactive path {
   .dash-chart-wide { grid-column: 1 / -1; }
   .dash-empty { color: var(--muted); padding: 20px 4px; }
   .bulk-style-dlg { width: min(480px, 92vw); }
-  .bulk-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  /* :not([hidden]) so the "hidden" attribute (used to show/hide this row based on the
+     "Which ones" dropdown) isn't overridden by this same-specificity display rule. */
+  .bulk-row:not([hidden]) { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
   .bulk-row select { flex: none; width: auto; }
   .bulk-row input[type=text] { flex: 1; }
-  .bulk-check { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text); white-space: nowrap; }
+  .bulk-check:not([hidden]) { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text); white-space: nowrap; }
   .bulk-echo { color: var(--muted); font-size: 12px; margin-top: 8px; font-style: italic; }
   .bulk-match-count { font-size: 13px; font-weight: 600; margin-top: 2px; }
   .bulk-match-count.err { color: var(--danger); font-weight: 400; font-style: normal; }
