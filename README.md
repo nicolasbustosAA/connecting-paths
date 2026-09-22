@@ -62,13 +62,14 @@ many nodes or paths at once, instead of editing them one by one. Pick what to ta
 
 The dialog shows a live match count and a plain-English description of the query (so an
 inverted query can't be misread), and highlights every matching node/path on the map as
-you adjust the query. Check only the properties you want to change — unchecked ones are
-left alone, so recoloring a set of nodes doesn't reset their icon scale, for example.
-**Reset to file style** clears your bulk edits from the matched items, restoring whatever
-the loaded file originally specified. Bulk styles are separate from the file's own
-`<Style>` styling: turning **File styles** off only hides the file's original look, your
-bulk edits stay visible; they're also included when exporting KML, and are undoable
-(Ctrl+Z) like any other edit.
+you adjust the query. Check only the properties you want to change on this pass — unchecked
+ones fall back to the file's own style, not to whatever an earlier bulk edit had set on that
+item, so every matched item ends up looking consistent instead of carrying forward leftover
+values from a previous, different bulk edit. **Reset to file style** clears your bulk edits
+from the matched items entirely, restoring whatever the loaded file originally specified.
+Bulk styles are separate from the file's own `<Style>` styling: turning **File styles** off
+only hides the file's original look, your bulk edits stay visible; they're also included
+when exporting KML, and are undoable (Ctrl+Z) like any other edit.
 
 ## Features
 

@@ -2756,8 +2756,14 @@ svg.leaflet-image-layer.leaflet-interactive path {
     var patch = bulkStylePatch(isLink);
     if (!Object.keys(patch).length) return;
     pushUndo("Bulk style");
+    /* Apply is a full reset-then-apply for each matched item's userStyle - a fresh
+       object with only the checked properties, not merged onto whatever userStyle
+       that item already had. Otherwise leftover properties from an earlier, different
+       bulk edit (e.g. a scale set on some items but not others) would keep making an
+       otherwise-uniform selection look inconsistent. Unchecked properties still fall
+       through to the file's own style via mergeStyle() in styleOf()/linkStyleOf(). */
     res.result.items.forEach(function (item) {
-      item.userStyle = Object.assign({}, item.userStyle || {}, patch);
+      item.userStyle = Object.assign({}, patch);
     });
     clearBulkPreview();
     drawNodes();
