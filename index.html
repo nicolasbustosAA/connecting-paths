@@ -752,7 +752,17 @@ svg.leaflet-image-layer.leaflet-interactive path {
     width: 100%; background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
     border-radius: 6px; padding: 6px 8px; font: inherit;
   }
-  .label-filter { width: 190px; flex: none; }
+  .label-filter { width: 100%; }
+  .popover-wrap { position: relative; display: inline-flex; }
+  .popover {
+    position: absolute; top: 100%; left: 0; margin-top: 6px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px; z-index: 2000; display: flex; flex-direction: column; gap: 8px;
+    min-width: 230px; box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
+  }
+  .popover.hidden { display: none; }
+  .popover button, .popover select { width: 100%; }
+  .popover-sep { border: none; border-top: 1px solid var(--border); margin: 2px 0; width: 100%; }
   .pad { padding: 6px 12px 10px; }
   #status {
     padding: 6px 12px; background: var(--panel); border-top: 1px solid var(--border);
@@ -816,10 +826,19 @@ svg.leaflet-image-layer.leaflet-interactive path {
 <body>
 <header>
   <h1>Connecting<span>Paths</span></h1>
-  <button id="btnLoad" class="primary">Load KML/KMZ&hellip;</button>
-  <input id="fileKml" type="file" accept=".kml,.kmz,.xml" hidden />
-  <button id="btnImportCsv">Import CSV&hellip;</button>
-  <input id="fileCsv" type="file" accept=".csv,.txt" hidden />
+  <div class="popover-wrap">
+    <button id="btnFileMenu" class="popover-trigger" type="button">File &#9662;</button>
+    <div id="fileMenu" class="popover hidden">
+      <button id="btnLoad" class="primary">Load KML/KMZ&hellip;</button>
+      <input id="fileKml" type="file" accept=".kml,.kmz,.xml" hidden />
+      <button id="btnImportCsv">Import CSV&hellip;</button>
+      <input id="fileCsv" type="file" accept=".csv,.txt" hidden />
+      <button id="btnExportCsv" disabled>Export CSV</button>
+      <button id="btnExportKml" disabled>Export KML</button>
+      <hr class="popover-sep" />
+      <button id="btnClear" class="danger" disabled>Clear links</button>
+    </div>
+  </div>
   <div class="toolgroup" id="toolGroup">
     <button data-tool="select" class="on" title="Click a node or path to select it; drag a box or shift-click to select several (V)">Select</button>
     <button data-tool="node" title="Click, then click the map to place nodes (N)">Add node</button>
@@ -831,21 +850,24 @@ svg.leaflet-image-layer.leaflet-interactive path {
   </div>
   <button id="btnMerge" title="Merge the two selected nodes into one, keeping the more-connected one" disabled>Merge nodes</button>
   <button id="btnNaming" title="Set the auto-naming format for nodes and paths">Naming&hellip;</button>
-  <button id="btnExportCsv" disabled>Export CSV</button>
-  <button id="btnExportKml" disabled>Export KML</button>
   <span class="spacer"></span>
-  <select id="basemap" title="Basemap"></select>
-  <button id="btnRecheckMaps" title="Re-test which map providers your network can reach">Recheck maps</button>
+  <div class="popover-wrap">
+    <button id="btnDisplayMenu" class="popover-trigger" type="button">Display &#9662;</button>
+    <div id="displayMenu" class="popover hidden">
+      <select id="basemap" title="Basemap"></select>
+      <button id="btnRecheckMaps" title="Re-test which map providers your network can reach">Recheck maps</button>
+      <hr class="popover-sep" />
+      <button id="btnLabelsNodes" title="Show or hide the name label under each node">Node labels: on</button>
+      <input id="nodeLabelFilter" type="text" class="label-filter" placeholder="Hide node labels containing&hellip;"
+        title="Node names containing this text (case-insensitive) will not show a label, even when Node labels is on. Leave empty to show all node labels." />
+      <button id="btnLabelsPaths" title="Show or hide the name label on each path">Path labels: on</button>
+      <button id="btnFileStyles" title="Use the colors, icon sizes and line widths defined in the loaded KML/KMZ">File styles: on</button>
+      <button id="btnSnap" title="Snap to existing nodes while placing or moving, within a few pixels">Snap: on</button>
+    </div>
+  </div>
   <button id="btnFit" title="Zoom the map to fit every node (F)" disabled>Zoom to fit</button>
-  <button id="btnLabelsNodes" title="Show or hide the name label under each node">Node labels: on</button>
-  <input id="nodeLabelFilter" type="text" class="label-filter" placeholder="Hide node labels containing&hellip;"
-    title="Node names containing this text (case-insensitive) will not show a label, even when Node labels is on. Leave empty to show all node labels." />
-  <button id="btnLabelsPaths" title="Show or hide the name label on each path">Path labels: on</button>
-  <button id="btnFileStyles" title="Use the colors, icon sizes and line widths defined in the loaded KML/KMZ">File styles: on</button>
-  <button id="btnSnap" title="Snap to existing nodes while placing or moving, within a few pixels">Snap: on</button>
   <button id="btnUndo" disabled>Undo</button>
   <button id="btnRedo" disabled>Redo</button>
-  <button id="btnClear" class="danger" disabled>Clear links</button>
   <button id="btnDashboard" disabled>Dashboard</button>
 </header>
 
@@ -3206,6 +3228,33 @@ svg.leaflet-image-layer.leaflet-interactive path {
     });
   });
 
+  /* ---------------- header popovers (File / Display menus) ---------------- */
+
+  function closeAllPopovers() {
+    document.querySelectorAll(".popover").forEach(function (p) { p.classList.add("hidden"); });
+  }
+
+  function setupPopover(triggerId, panelId, closeOnButtonClick) {
+    var trigger = $(triggerId), panel = $(panelId);
+    if (!trigger || !panel) return;
+    trigger.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var wasOpen = !panel.classList.contains("hidden");
+      closeAllPopovers();
+      if (!wasOpen) panel.classList.remove("hidden");
+    });
+    panel.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (closeOnButtonClick && e.target.tagName === "BUTTON") closeAllPopovers();
+    });
+  }
+
+  /* File menu closes after a one-shot action (load/import/export/clear); Display menu
+     stays open so several toggles can be flipped without reopening it each time. */
+  setupPopover("btnFileMenu", "fileMenu", true);
+  setupPopover("btnDisplayMenu", "displayMenu", false);
+  document.addEventListener("click", closeAllPopovers);
+
   map.on("mousedown", beginBoxSelect);
 
   var namingDlg = $("namingDlg");
@@ -3259,6 +3308,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
   });
 
   document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && document.querySelector(".popover:not(.hidden)")) {
+      closeAllPopovers();
+      return;
+    }
     if (dlg.open || namingDlg.open || editNodeDlg.open || $("dashDlg").open) return;
     /* Never hijack typing in the filter boxes - Delete and Ctrl+Z belong to the input. */
     var t = e.target;
