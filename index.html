@@ -1072,33 +1072,16 @@ svg.leaflet-image-layer.leaflet-interactive path {
     { id: "esrisat", label: "Satellite (Esri)",
       url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
       opts: { maxZoom: 19, attribution: "Esri, Maxar, Earthstar Geographics" } },
-    { id: "esritopo", label: "Topographic (Esri)",
-      url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
-      opts: { maxZoom: 19, attribution: "Esri, HERE, Garmin, FAO, NOAA, USGS" } },
-    { id: "esrigray", label: "Light Gray (Esri)",
-      url: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
-      opts: { maxZoom: 16, attribution: "Esri, HERE, Garmin" } },
-    { id: "esridarkgray", label: "Dark Gray (Esri)",
-      url: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
-      opts: { maxZoom: 16, attribution: "Esri, HERE, Garmin" } },
-    { id: "cartopositron", label: "Positron (CARTO)",
-      url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-      opts: { maxZoom: 20, subdomains: ["a", "b", "c", "d"], attribution: "\u00a9 OpenStreetMap contributors \u00a9 CARTO" } },
-    { id: "cartodark", label: "Dark Matter (CARTO)",
-      url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-      opts: { maxZoom: 20, subdomains: ["a", "b", "c", "d"], attribution: "\u00a9 OpenStreetMap contributors \u00a9 CARTO" } },
-    { id: "osm", label: "OpenStreetMap",
-      url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-      opts: { maxZoom: 19, subdomains: ["a", "b", "c"], attribution: "\u00a9 OpenStreetMap contributors" } },
-    { id: "opentopo", label: "OpenTopoMap",
-      url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
-      opts: { maxZoom: 17, subdomains: ["a", "b", "c"], attribution: "\u00a9 OpenStreetMap contributors, SRTM \u00a9 OpenTopoMap (CC-BY-SA)" } },
+    { id: "mapboxsat", label: "Satellite (Mapbox)\u2026",
+      url: "https://api.mapbox.com/styles/v1/mapbox/satellite-v9/tiles/256/{z}/{x}/{y}",
+      opts: { maxZoom: 22, attribution: "Mapbox, Maxar" } },
     { id: "custom", label: "Custom tile server\u2026", url: "", opts: { maxZoom: 22 } },
     { id: "none", label: "No basemap", url: "", opts: {} }
   ];
 
   var BASEMAP_KEY = "connecting-paths-basemap";
   var CUSTOM_KEY = "connecting-paths-custom-tiles";
+  var MAPBOX_TOKEN_KEY = "connecting-paths-mapbox-token";
   var FILE_STYLES_KEY = "connecting-paths-file-styles";
   var LABELS_NODES_KEY = "connecting-paths-labels-nodes";
   var LABELS_PATHS_KEY = "connecting-paths-labels-paths";
@@ -1156,10 +1139,11 @@ svg.leaflet-image-layer.leaflet-interactive path {
   }
 
   function checkAllBasemaps() {
-    var checkable = PROVIDERS.filter(function (p) { return p.id !== "custom" && p.id !== "none"; });
+    var checkable = PROVIDERS.filter(function (p) { return p.id !== "custom" && p.id !== "none" && p.id !== "mapboxsat"; });
     checkable.forEach(function (p) { basemapStatus[p.id] = "checking"; });
     basemapStatus.custom = true;
     basemapStatus.none = true;
+    basemapStatus.mapboxsat = true; // needs a token first; verified via tileerror instead, like Custom
     updateBasemapOptionLabels();
 
     var pending = checkable.map(function (p) {
@@ -1208,6 +1192,20 @@ svg.leaflet-image-layer.leaflet-interactive path {
           "Tile URL template");
         return;
       }
+    }
+    if (p.id === "mapboxsat") {
+      var token = lsGet(MAPBOX_TOKEN_KEY) || "";
+      if (!token) {
+        if (!promptIfMissing) { setBasemap("none"); return; }
+        askName("Mapbox Satellite",
+          "Free Mapbox access token (from account.mapbox.com/access-tokens) \u2014 stored only in this browser.",
+          "",
+          function (v) { lsSet(MAPBOX_TOKEN_KEY, v); setBasemap("mapboxsat"); },
+          function () { setBasemap("none"); },
+          "Access token");
+        return;
+      }
+      url = p.url + "?access_token=" + encodeURIComponent(token);
     }
 
     var errors = 0, warned = false;

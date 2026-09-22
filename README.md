@@ -91,16 +91,20 @@ remembered even if you later change the naming template or rename an endpoint no
   average connections per node, unconnected nodes) plus three interactive charts — path
   length distribution, node degree distribution, and the top 10 most-connected nodes.
   Updates live as you add or remove connections.
-- Basemaps: Streets, Satellite, Topographic, Light Gray and Dark Gray (all Esri), Positron
-  and Dark Matter (CARTO), OpenStreetMap, and OpenTopoMap — all free, no API key required —
-  plus **Custom tile server…** (for an internal/paid tile endpoint of your own) or none.
+- Basemaps: Streets (Esri, default) and Satellite (Esri), plus **Satellite (Mapbox)…** as a
+  second, independently-sourced satellite option (useful since Mapbox and Esri refresh their
+  imagery on different schedules, so one sometimes has a newer capture than the other for a
+  given area), **Custom tile server…**, or none. Kept deliberately to just these, since the
+  Esri layers are the ones proven reliable on restrictive/corporate networks; Carto and the
+  main `openstreetmap.org` tile server were dropped for the same reason (see Notes below).
+  Picking **Satellite (Mapbox)…** the first time prompts for a free Mapbox access token
+  (from account.mapbox.com/access-tokens, no credit card required) which is stored only in
+  this browser's `localStorage`.
   The choice is remembered. On load — and whenever you click **Recheck maps** — the app
   probes every provider for real reachability on your current network and disables/labels
   any that fail as "(unavailable)"; if your active basemap goes unreachable it automatically
-  switches you to a working one and tells you which. Some free hosts (notably the main
-  `openstreetmap.org` tile server) are more likely to be blocked on restrictive/corporate
-  networks than others — the Esri and CARTO layers have generally proven more reliable
-  there (see Notes below).
+  switches you to a working one and tells you which. (Mapbox Satellite is verified instead
+  by its own tile-load-error check, like Custom tile server, since it needs a token first.)
 - **Node labels** and **Path labels** toggle independently, plus a metric scale bar; both
   choices are remembered. A **"Hide node labels containing…"** text filter (next to the
   Node labels button) additionally hides just the labels of nodes whose name contains that
