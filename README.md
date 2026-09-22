@@ -149,11 +149,13 @@ when exporting KML, and are undoable (Ctrl+Z) like any other edit.
   switches you to a working one and tells you which. (Mapbox Satellite is verified instead
   by its own tile-load-error check, like Custom tile server, since it needs a token first.)
 - **Node labels** and **Path labels** toggle independently, plus a metric scale bar; both
-  choices are remembered. A **"Hide node labels containing…"** text filter (next to the
-  Node labels button) additionally hides just the labels of nodes whose name contains that
-  text (case-insensitive) — handy for silencing one category of node (e.g. everything named
-  like `P-01`) without turning off labels for every other node. It only affects label
-  visibility, not the nodes themselves; leave it empty to show all node labels again.
+  choices are remembered. A **"Hide node labels…"** text filter (next to the Node labels
+  button), paired with a **Contains / Starts with / Ends with** mode dropdown, additionally
+  hides just the labels of nodes whose name matches that text (case-insensitive) — handy for
+  silencing one category of node (e.g. everything named like `P-01`, or every name starting
+  with `TEMP-`, or ending in `-OLD`) without turning off labels for every other node. It only
+  affects label visibility, not the nodes themselves; leave the text empty to show all node
+  labels again.
 - Work is auto-saved in the browser's local storage, so a reload restores your session.
 - **Import CSV** re-loads a previously exported file and rebuilds the lines by matching
   coordinates (within 1 m) and falling back to node names; path names are regenerated

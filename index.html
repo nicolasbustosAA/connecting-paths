@@ -754,6 +754,8 @@ svg.leaflet-image-layer.leaflet-interactive path {
     border-radius: 6px; padding: 6px 8px; font: inherit;
   }
   .label-filter { width: 100%; }
+  .filter-row { display: flex; gap: 6px; width: 100%; }
+  .filter-row .label-filter { flex: 1; min-width: 0; }
   .popover-wrap { position: relative; display: inline-flex; }
   .popover {
     position: absolute; top: 100%; left: 0; margin-top: 6px;
@@ -763,6 +765,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   }
   .popover.hidden { display: none; }
   .popover button, .popover select { width: 100%; }
+  .popover .filter-row select { width: auto; flex: none; }
   .popover-sep { border: none; border-top: 1px solid var(--border); margin: 2px 0; width: 100%; }
   .pad { padding: 6px 12px 10px; }
   #status {
@@ -891,8 +894,15 @@ svg.leaflet-image-layer.leaflet-interactive path {
       <button id="btnRecheckMaps" title="Re-test which map providers your network can reach">Recheck maps</button>
       <hr class="popover-sep" />
       <button id="btnLabelsNodes" title="Show or hide the name label under each node">Node labels: on</button>
-      <input id="nodeLabelFilter" type="text" class="label-filter" placeholder="Hide node labels containing&hellip;"
-        title="Node names containing this text (case-insensitive) will not show a label, even when Node labels is on. Leave empty to show all node labels." />
+      <div class="filter-row">
+        <select id="nodeLabelFilterMode" title="How to match node names below">
+          <option value="contains">Contains</option>
+          <option value="starts">Starts with</option>
+          <option value="ends">Ends with</option>
+        </select>
+        <input id="nodeLabelFilter" type="text" class="label-filter" placeholder="Hide node labels&hellip;"
+          title="Node names matching this text (case-insensitive), per the mode dropdown, will not show a label, even when Node labels is on. Leave empty to show all node labels." />
+      </div>
       <button id="btnLabelsPaths" title="Show or hide the name label on each path">Path labels: on</button>
       <button id="btnFileStyles" title="Use the colors, icon sizes and line widths defined in the loaded KML/KMZ">File styles: on</button>
       <button id="btnSnap" title="Snap to existing nodes while placing or moving, within a few pixels">Snap: on</button>
@@ -1112,7 +1122,8 @@ svg.leaflet-image-layer.leaflet-interactive path {
     linkAnchor: null,   // node id awaiting a partner, "Add path" tool only
     labelsNodes: true,
     labelsPaths: true,
-    nodeLabelFilter: "", // node names containing this text (case-insensitive) skip their label
+    nodeLabelFilter: "", // node names matching this text (case-insensitive) skip their label
+    nodeLabelFilterMode: "contains", // how to match nodeLabelFilter: "contains" | "starts" | "ends"
     seq: 1,           // next link sequence number
     nodeSeq: 1,       // next manually-added node sequence number
     fileStyles: true, // honor <Style> from the loaded KML/KMZ instead of the app palette
@@ -1189,6 +1200,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   var LABELS_NODES_KEY = "connecting-paths-labels-nodes";
   var LABELS_PATHS_KEY = "connecting-paths-labels-paths";
   var NODE_LABEL_FILTER_KEY = "connecting-paths-node-label-filter";
+  var NODE_LABEL_FILTER_MODE_KEY = "connecting-paths-node-label-filter-mode";
   var SNAP_KEY = "connecting-paths-snap";
   var currentBase = null;
   var basemapSel = document.getElementById("basemap");
@@ -1755,7 +1767,11 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   function nodeLabelHidden(name) {
     if (!state.nodeLabelFilter) return false;
-    return (name || "").toLowerCase().indexOf(state.nodeLabelFilter.toLowerCase()) !== -1;
+    var n = (name || "").toLowerCase();
+    var f = state.nodeLabelFilter.toLowerCase();
+    if (state.nodeLabelFilterMode === "starts") return n.indexOf(f) === 0;
+    if (state.nodeLabelFilterMode === "ends") return f.length > 0 && n.lastIndexOf(f) === n.length - f.length;
+    return n.indexOf(f) !== -1;
   }
 
   function nodeStyle(node) {
@@ -3776,6 +3792,11 @@ svg.leaflet-image-layer.leaflet-interactive path {
     lsSet(NODE_LABEL_FILTER_KEY, state.nodeLabelFilter);
     drawNodes();
   });
+  $("nodeLabelFilterMode").addEventListener("change", function () {
+    state.nodeLabelFilterMode = this.value;
+    lsSet(NODE_LABEL_FILTER_MODE_KEY, state.nodeLabelFilterMode);
+    drawNodes();
+  });
   $("btnLabelsPaths").addEventListener("click", function () {
     state.labelsPaths = !state.labelsPaths;
     lsSet(LABELS_PATHS_KEY, state.labelsPaths ? "1" : "0");
@@ -3961,10 +3982,12 @@ svg.leaflet-image-layer.leaflet-interactive path {
   state.labelsNodes = lsGet(LABELS_NODES_KEY) !== "0";
   state.labelsPaths = lsGet(LABELS_PATHS_KEY) !== "0";
   state.nodeLabelFilter = lsGet(NODE_LABEL_FILTER_KEY) || "";
+  state.nodeLabelFilterMode = lsGet(NODE_LABEL_FILTER_MODE_KEY) || "contains";
   state.snap = lsGet(SNAP_KEY) !== "0";
   $("btnLabelsNodes").textContent = "Node labels: " + (state.labelsNodes ? "on" : "off");
   $("btnLabelsPaths").textContent = "Path labels: " + (state.labelsPaths ? "on" : "off");
   $("nodeLabelFilter").value = state.nodeLabelFilter;
+  $("nodeLabelFilterMode").value = state.nodeLabelFilterMode;
   $("btnSnap").textContent = "Snap: " + (state.snap ? "on" : "off");
   restore();
   clearUndo();
