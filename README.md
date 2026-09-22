@@ -25,6 +25,7 @@ typing in a text field):
 | Tool | Shortcut | What it does |
 | --- | --- | --- |
 | **Select** | `V` | Default tool. Click a node/path to select it, shift-click to add to the selection, or drag a box on empty map (or starting on a path) to select everything inside. |
+| **Pan** | `H` | Drag anywhere — even starting on top of a node or path — to move the map around. Nothing is selected or moved; it's purely for navigating, which is handy on a trackpad where drag is your only way to pan. |
 | **Add node** | `N` | Click anywhere on the map to drop a new node. |
 | **Add path** | `P` | Click a node, then another, to connect them; keep clicking to chain a route (`A→B→C→D`). Existing paths become click-through so a busy node stays easy to hit. |
 | **Move** | `M` | Drag a node — or, if several are selected, drag any one of them — to reposition the whole group; connected paths follow in real time. |

@@ -709,7 +709,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   .toolgroup button:hover { border-color: transparent; background: var(--panel); }
   .toolgroup button.on { background: var(--accent-2); color: #06121c; }
   #map.adding, #map.linking, #map.splitting, #map.rerouting { cursor: crosshair; }
-  #map.moving { cursor: grab; }
+  #map.moving, #map.panning { cursor: grab; }
   #map.deleting { cursor: crosshair; }
   #map.node-dragging, #map.node-dragging * { cursor: grabbing !important; }
   #map.select-dragging, #map.select-dragging * { cursor: crosshair !important; }
@@ -869,6 +869,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   </div>
   <div class="toolgroup" id="toolGroup">
     <button data-tool="select" class="on" title="Click a node or path to select it; drag a box or shift-click to select several (V)">Select</button>
+    <button data-tool="pan" title="Drag anywhere - even over nodes or paths - to move the map around without selecting or moving anything; handy without a mouse (H)">Pan</button>
     <button data-tool="node" title="Click, then click the map to place nodes (N)">Add node</button>
     <button data-tool="path" title="Click, then click two nodes to connect them; existing paths become click-through (P)">Add path</button>
     <button data-tool="move" title="Drag a node (or the whole selection) to reposition it; connected paths follow in real time (M)">Move</button>
@@ -1118,6 +1119,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   var TOOLS = [
     { id: "select", label: "Select" },
+    { id: "pan", label: "Pan" },
     { id: "node", label: "Add node" },
     { id: "path", label: "Add path" },
     { id: "move", label: "Move" },
@@ -1125,7 +1127,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     { id: "split", label: "Split path" },
     { id: "reroute", label: "Re-route" }
   ];
-  var KEY_TO_TOOL = { v: "select", n: "node", p: "path", m: "move", d: "delete", s: "split", r: "reroute" };
+  var KEY_TO_TOOL = { v: "select", h: "pan", n: "node", p: "path", m: "move", d: "delete", s: "split", r: "reroute" };
 
   var NODE_TEMPLATE_KEY = "connecting-paths-node-template";
   var PATH_TEMPLATE_KEY = "connecting-paths-path-template";
@@ -1756,7 +1758,12 @@ svg.leaflet-image-layer.leaflet-interactive path {
       color: isSel ? "#ff9f43" : base,
       weight: 2,
       fillColor: isSel ? "#ff9f43" : base,
-      fillOpacity: isSel ? 0.9 : (st && st.opacity != null ? Math.max(0.15, st.opacity) : 0.55)
+      fillOpacity: isSel ? 0.9 : (st && st.opacity != null ? Math.max(0.15, st.opacity) : 0.55),
+      /* Pan is a pure "move the view" tool: nodes (and paths, see drawLink) go
+         non-interactive while it's on so a drag that starts on top of one falls
+         straight through to Leaflet's own map panning instead of being captured
+         as a select/move gesture. */
+      interactive: state.tool !== "pan"
     };
   }
 
@@ -1779,7 +1786,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     state.nodes.forEach(function (node) {
       var url = nodeIconUrl(node);
       var m = url
-        ? L.marker([node.lat, node.lon], { icon: nodeIcon(node, url), keyboard: false })
+        ? L.marker([node.lat, node.lon], { icon: nodeIcon(node, url), keyboard: false, interactive: state.tool !== "pan" })
         : L.circleMarker([node.lat, node.lon], nodeStyle(node));
       m.on("mousedown", function (e) {
         if (state.tool === "move") { beginNodeDrag(node, m, e); return; }
@@ -1942,9 +1949,11 @@ svg.leaflet-image-layer.leaflet-interactive path {
   function drawLink(l) {
     var a = state.byId[l.a], b = state.byId[l.b];
     /* While "Add path" is on, paths are non-interactive so clicks fall through to the
-       nodes underneath — otherwise a node with many connections is impossible to hit. */
+       nodes underneath — otherwise a node with many connections is impossible to hit.
+       Same idea for "Pan": nothing should intercept a drag while the goal is just to
+       move the map (see nodeStyle() for the matching node-side change). */
     var opts = linkStyle(l);
-    opts.interactive = state.tool !== "path";
+    opts.interactive = state.tool !== "path" && state.tool !== "pan";
     var line = L.polyline([[a.lat, a.lon], [b.lat, b.lon]], opts);
     if (state.tool !== "path") {
       line.on("click", function (e) {
@@ -3308,11 +3317,15 @@ svg.leaflet-image-layer.leaflet-interactive path {
       btn.classList.toggle("on", btn.dataset.tool === tool);
     });
     var mapEl = $("map");
-    ["adding", "linking", "moving", "deleting", "splitting", "rerouting"].forEach(function (c) {
+    ["adding", "linking", "moving", "deleting", "splitting", "rerouting", "panning"].forEach(function (c) {
       mapEl.classList.remove(c);
     });
-    var cls = { node: "adding", path: "linking", move: "moving", delete: "deleting", split: "splitting", reroute: "rerouting" }[tool];
+    var cls = { node: "adding", path: "linking", move: "moving", delete: "deleting", split: "splitting", reroute: "rerouting", pan: "panning" }[tool];
     if (cls) mapEl.classList.add(cls);
+    /* Rebuild nodes too (not just links) so their "interactive" flag picks up the
+       new tool immediately - Pan needs nodes non-interactive, every other tool
+       needs them clickable again. */
+    drawNodes();
     drawLinks();
     updateMergeButton();
     updateHint();
@@ -3322,6 +3335,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
     var hint = $("hint");
     if (!hint) return;
     switch (state.tool) {
+      case "pan":
+        hint.textContent = "Pan is on: drag anywhere \u2014 even over nodes or paths \u2014 to move the map around " +
+          "without selecting or moving anything. Press Esc to stop."; break;
       case "node":
         hint.textContent = "Add node is on: click anywhere on the map to place a node. Press Esc to stop."; break;
       case "path":
@@ -3699,10 +3715,11 @@ svg.leaflet-image-layer.leaflet-interactive path {
   document.querySelectorAll("#toolGroup button").forEach(function (btn) {
     btn.addEventListener("click", function () {
       var tool = btn.dataset.tool;
-      if (!state.nodes.length && tool !== "select") { msg("Load a KML or KMZ first.", "err"); return; }
+      if (!state.nodes.length && tool !== "select" && tool !== "pan") { msg("Load a KML or KMZ first.", "err"); return; }
       setTool(tool);
       if (tool !== "select") msg(TOOLS.filter(function (t) { return t.id === tool; })[0].label + ": " +
-        { node: "click anywhere on the map to place a node.", path: "click a node, then a second node to connect them.",
+        { pan: "drag anywhere to move the map without selecting anything.",
+          node: "click anywhere on the map to place a node.", path: "click a node, then a second node to connect them.",
           move: "drag a node to reposition it.", delete: "click a node or path to remove it.",
           split: "click a path to insert a new node there.", reroute: "drag a path's end onto a different node."
         }[tool] + " Press Esc to stop.");
@@ -3820,7 +3837,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     }
     if (!e.ctrlKey && !e.metaKey && !e.altKey) {
       var tool = KEY_TO_TOOL[e.key.toLowerCase()];
-      if (tool && (tool === "select" || state.nodes.length)) { e.preventDefault(); setTool(tool); }
+      if (tool && (tool === "select" || tool === "pan" || state.nodes.length)) { e.preventDefault(); setTool(tool); }
     }
   });
 
