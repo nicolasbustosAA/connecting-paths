@@ -878,6 +878,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     <button data-tool="reroute" title="Drag a path's end onto a different node to rewire it (R)">Re-route</button>
   </div>
   <button id="btnMerge" title="Merge the two selected nodes into one, keeping the more-connected one" disabled>Merge nodes</button>
+  <button id="btnAddNodeCoord" title="Add a new node by typing its exact latitude and longitude" disabled>Add by coordinates&hellip;</button>
   <button id="btnNaming" title="Set the auto-naming format for nodes and paths">Naming&hellip;</button>
   <button id="btnBulkStyle" title="Apply a color, opacity, scale or width to many nodes or paths at once" disabled>Bulk style&hellip;</button>
   <span class="spacer"></span>
@@ -941,8 +942,8 @@ svg.leaflet-image-layer.leaflet-interactive path {
 </dialog>
 
 <dialog id="editNodeDlg">
-  <h3>Edit node</h3>
-  <div class="sub" style="color:var(--muted);font-size:12px">Set the name and exact coordinates.</div>
+  <h3 id="editNodeTitle">Edit node</h3>
+  <div id="editNodeSub" class="sub" style="color:var(--muted);font-size:12px">Set the name and exact coordinates.</div>
   <label class="lbl" for="editNodeName">Name</label>
   <input id="editNodeName" type="text" autocomplete="off" />
   <label class="lbl" for="editNodeLat">Latitude</label>
@@ -2512,6 +2513,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     $("btnClear").disabled = state.links.length === 0;
     $("btnDashboard").disabled = state.nodes.length === 0;
     $("btnBulkStyle").disabled = state.nodes.length === 0;
+    $("btnAddNodeCoord").disabled = state.nodes.length === 0;
     $("btnFit").disabled = state.nodes.length === 0;
     updateHistoryButtons();
   }
@@ -3225,12 +3227,15 @@ svg.leaflet-image-layer.leaflet-interactive path {
     msg("Node added: " + node.name, "ok");
   }
 
-  var editNodeDlg = $("editNodeDlg"), editNodeId = null;
+  var editNodeDlg = $("editNodeDlg"), editNodeId = null, addingNode = false;
 
   function editNode(id) {
     var node = state.byId[id];
     if (!node) return;
+    addingNode = false;
     editNodeId = id;
+    $("editNodeTitle").textContent = "Edit node";
+    $("editNodeSub").textContent = "Set the name and exact coordinates.";
     $("editNodeName").value = node.name;
     $("editNodeLat").value = node.lat;
     $("editNodeLon").value = node.lon;
@@ -3238,16 +3243,51 @@ svg.leaflet-image-layer.leaflet-interactive path {
     setTimeout(function () { $("editNodeName").select(); }, 0);
   }
 
-  function commitEditNode() {
-    var node = state.byId[editNodeId];
+  /* "Add by coordinates…" reuses the Edit node dialog so both flows share one set of
+     validated fields — addingNode tells commitEditNode() whether to create a brand
+     new node or update editNodeId. Latitude/longitude default to the current map
+     center so the fields are never blank; overwrite them with the real numbers. */
+  function openAddNodeDlg() {
+    addingNode = true;
     editNodeId = null;
-    if (!node) return;
+    $("editNodeTitle").textContent = "Add node";
+    $("editNodeSub").textContent = "Type a name and exact coordinates for the new node.";
+    $("editNodeName").value = applyNodeTemplate(getNodeTemplate(), state.nodeSeq);
+    var c = map.getCenter();
+    $("editNodeLat").value = c.lat.toFixed(6);
+    $("editNodeLon").value = c.lng.toFixed(6);
+    editNodeDlg.showModal();
+    setTimeout(function () { $("editNodeName").select(); }, 0);
+  }
+
+  function commitEditNode() {
     var name = $("editNodeName").value.trim();
     var lat = parseFloat($("editNodeLat").value);
     var lon = parseFloat($("editNodeLon").value);
     if (!name) { msg("Node name can't be empty.", "err"); return; }
     if (!isFinite(lat) || lat < -90 || lat > 90) { msg("Latitude must be between -90 and 90.", "err"); return; }
     if (!isFinite(lon) || lon < -180 || lon > 180) { msg("Longitude must be between -180 and 180.", "err"); return; }
+
+    if (addingNode) {
+      addingNode = false;
+      var n = state.nodeSeq++;
+      var id = "m" + n;
+      while (state.byId[id]) { n = state.nodeSeq++; id = "m" + n; }
+      var newNode = { id: id, name: name, lat: lat, lon: lon, alt: 0, desc: "", degree: 0 };
+      pushUndo("add node " + newNode.name);
+      state.nodes.push(newNode);
+      state.byId[newNode.id] = newNode;
+      drawNodes();
+      renderAll();
+      save();
+      editNodeDlg.close();
+      msg("Node added: " + newNode.name, "ok");
+      return;
+    }
+
+    var node = state.byId[editNodeId];
+    editNodeId = null;
+    if (!node) return;
     pushUndo("edit " + node.name);
     node.name = name;
     node.lat = lat;
@@ -3709,6 +3749,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     this.textContent = "Snap: " + (state.snap ? "on" : "off");
   });
   $("btnMerge").addEventListener("click", mergeSelectedNodes);
+  $("btnAddNodeCoord").addEventListener("click", openAddNodeDlg);
   $("nodeSearch").addEventListener("input", renderNodes);
   $("linkSearch").addEventListener("input", renderLinks);
 
@@ -3782,7 +3823,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   });
 
   $("editNodeOk").addEventListener("click", commitEditNode);
-  $("editNodeCancel").addEventListener("click", function () { editNodeId = null; editNodeDlg.close(); });
+  $("editNodeCancel").addEventListener("click", function () { editNodeId = null; addingNode = false; editNodeDlg.close(); });
   ["editNodeName", "editNodeLat", "editNodeLon"].forEach(function (id) {
     $(id).addEventListener("keydown", function (e) {
       if (e.key === "Enter") { e.preventDefault(); commitEditNode(); }

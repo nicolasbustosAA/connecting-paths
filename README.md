@@ -44,6 +44,10 @@ Every node and path can also be edited precisely from the sidebar: **edit** on a
 opens a dialog with numeric latitude/longitude fields (validated to real-world ranges)
 plus its name; **rename** on a path overrides its auto-generated name — that override is
 remembered even if you later change the naming template or rename an endpoint node.
+**Add by coordinates…** opens that same dialog to create a brand new node by typing its
+name and exact lat/lon instead of clicking the map — handy for placing a node at a
+surveyed position or one you don't currently see on screen. It's pre-filled with the
+current map center and the next auto-generated name, both of which you can overwrite.
 
 ### Bulk style
 
