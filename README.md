@@ -9,12 +9,40 @@ click node pairs to connect them (paths are auto-named from a configurable templ
 
 1. Double-click `index.html` (opens in your default browser — Chrome/Edge/Firefox).
 2. Click **Load KML/KMZ…** or drag a `.kml` or `.kmz` file onto the window. `sample.kml` is included for testing.
-3. Click **Add path** (it turns on and the cursor becomes a crosshair).
+3. Click **Add path** in the tool palette (it turns on and the cursor becomes a crosshair).
 4. Click a node on the map (or in the Nodes list) — it turns orange. Click a second node.
 5. The path is created immediately and named from the path template — `FROM↔TO` by default
    (the two node names in upper case, joined by `↔`, no spaces). A line is drawn between
    the two nodes.
-6. Repeat for every pair, then **Export CSV** and/or **Export KML**.
+6. Repeat for every pair (keep clicking to chain a route), then **Export CSV** and/or **Export KML**.
+
+## Editing tools
+
+A single row of tool buttons controls what clicking on the map does. Only one tool is
+active at a time (radio-style); keyboard shortcuts switch tools instantly (ignored while
+typing in a text field):
+
+| Tool | Shortcut | What it does |
+| --- | --- | --- |
+| **Select** | `V` | Default tool. Click a node/path to select it, shift-click to add to the selection, or drag a box on empty map (or starting on a path) to select everything inside. |
+| **Add node** | `N` | Click anywhere on the map to drop a new node. |
+| **Add path** | `P` | Click a node, then another, to connect them; keep clicking to chain a route (`A→B→C→D`). Existing paths become click-through so a busy node stays easy to hit. |
+| **Move** | `M` | Drag a node — or, if several are selected, drag any one of them — to reposition the whole group; connected paths follow in real time. |
+| **Delete** | `D` | Click a node or path to remove it immediately. An inline **Undo** button appears in the status bar in case it was a mistake. |
+| **Split path** | `S` | Click a path to insert a new node where you clicked and split it into two paths. |
+| **Re-route** | `R` | Drag a path's endpoint onto a different node to rewire it; a click without dragging just selects the path as normal. |
+
+`Esc` returns to Select (and clears the selection if you were already on it). With two
+nodes selected (and no paths in the selection), **Merge nodes** combines them into one,
+keeping whichever had more connections and dropping any duplicate/self links that would
+result. `Delete`/`Backspace` removes the whole current selection in one step. **Snap**
+(toggle button) pulls new/moved nodes onto an existing node within a few pixels, useful
+for exact alignment.
+
+Every node and path can also be edited precisely from the sidebar: **edit** on a node
+opens a dialog with numeric latitude/longitude fields (validated to real-world ranges)
+plus its name; **rename** on a path overrides its auto-generated name — that override is
+remembered even if you later change the naming template or rename an endpoint node.
 
 ## Features
 
@@ -34,19 +62,22 @@ click node pairs to connect them (paths are auto-named from a configurable templ
   picked is obvious, and unstyled placemarks keep the app colors. Missing or unreachable
   icon images fall back to a plain circle instead of a broken image. Exporting KML writes
   these styles back out, so a load → export → load round-trip keeps the original look.
-- Path names are generated, never typed, from a configurable template (default `FROM↔TO`, e.g. `TOWER A↔TOWER B`).
-- **Add path**: connections are only created while this toggle is on. While it is on,
-  existing paths are click-through (non-clickable), so a node with many connections
-  running over it stays easy to hit. With the toggle off, clicking a node just selects
-  it and clicking a path highlights it. Press `Esc` (or click the button again) to
-  leave the mode; **Add node** and **Add path** are mutually exclusive.
-- **Add node**: click the button (it turns on, cursor becomes a crosshair), then click
-  anywhere on the map to drop a new node there, named from the node template. Click the
-  button again (or press `Esc`) to leave add mode. Double-clicks place a single node, and
-  double-click zoom is suspended while the mode is on.
-- **Rename**/**del** buttons on every row in the Nodes list: rename updates any of that
-  node's existing connection names to match; delete removes the node and, after
-  confirming, any connections attached to it.
+- Path names are generated, never typed, from a configurable template (default `FROM↔TO`, e.g. `TOWER A↔TOWER B`),
+  unless you use **rename** on a path in the sidebar to set a custom name — that override sticks.
+- **Multi-select**: shift-click nodes/paths to build up a selection, or drag a box (in the
+  Select tool) to grab everything inside it. A multi-node selection can be dragged together
+  in the Move tool, merged (if exactly two nodes with no paths between them are selected),
+  or deleted in one step.
+- **Undo/Redo** (Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y) step back and forward through the whole
+  editing history — connections, node adds/edits/deletes, merges, splits, re-routes,
+  **Clear links** and CSV imports — up to 50 steps. Deletes are frictionless: instead of a
+  confirmation prompt, the node/path is removed immediately and an inline **Undo** button
+  appears in the status bar for a few seconds.
+- **edit**/**rename** actions on every row in the Nodes/Connections list: node **edit** opens
+  a dialog with numeric, range-validated latitude/longitude fields plus the name; renaming a
+  node updates any of its connections that haven't been manually renamed; path **rename**
+  sets a custom name that survives future template or endpoint-name changes; **del** removes
+  the row (with the same frictionless Undo toast as the Delete tool).
 - **Naming…** dialog: set the auto-naming format for future nodes and for all paths.
   Placeholders: `{n}`/`{n2}`/`{n3}`/`{n4}` (sequential number, optionally zero-padded);
   the path template also accepts `{from}`/`{to}` (node names as typed) and
@@ -55,15 +86,7 @@ click node pairs to connect them (paths are auto-named from a configurable templ
   (existing/imported node names are left alone). **Reset to defaults** restores
   `Node {n}` / `FROM↔TO`; **Cancel** discards unsaved edits.
 - Great-circle length per path and total length in the status bar.
-- **Chain linking**: after connecting two nodes the second one stays selected, so drawing a
-  route A→B→C→D is one click per node. `Esc` (or a click on empty map) ends the chain.
-- **Undo** (Ctrl+Z) steps back through the whole editing history — connections, node
-  adds/renames/deletes, **Clear links** and CSV imports — up to 50 steps. The button's
-  tooltip names what will be undone. Loading a file starts a fresh history.
-- `Delete`/`Backspace` removes the highlighted path, or the selected node (with the usual
-  confirmation). Keyboard shortcuts are ignored while you're typing in the filter boxes.
 - **Zoom to fit** (or press `F`) frames every node in view.
-- `Esc` cancels a pending selection or leaves Add node / Add path.
 - **Dashboard** button: summary cards (nodes, connections, total/average/min/max length,
   average connections per node, unconnected nodes) plus three interactive charts — path
   length distribution, node degree distribution, and the top 10 most-connected nodes.
@@ -76,7 +99,12 @@ click node pairs to connect them (paths are auto-named from a configurable templ
   probes every provider for real reachability on your current network and disables/labels
   any that fail as "(unavailable)"; if your active basemap goes unreachable it automatically
   switches you to a working one and tells you which.
-- Labels toggle for node and path names, plus a metric scale bar. The toggle is remembered.
+- **Node labels** and **Path labels** toggle independently, plus a metric scale bar; both
+  choices are remembered. A **"Hide node labels containing…"** text filter (next to the
+  Node labels button) additionally hides just the labels of nodes whose name contains that
+  text (case-insensitive) — handy for silencing one category of node (e.g. everything named
+  like `P-01`) without turning off labels for every other node. It only affects label
+  visibility, not the nodes themselves; leave it empty to show all node labels again.
 - Work is auto-saved in the browser's local storage, so a reload restores your session.
 - **Import CSV** re-loads a previously exported file and rebuilds the lines by matching
   coordinates (within 1 m) and falling back to node names; path names are regenerated

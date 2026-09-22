@@ -704,10 +704,22 @@ svg.leaflet-image-layer.leaflet-interactive path {
   button.primary { background: var(--accent); border-color: var(--accent); color: #06121c; font-weight: 600; }
   button.danger:hover { border-color: var(--danger); color: var(--danger); }
   button.on { background: var(--accent-2); border-color: var(--accent-2); color: #06121c; font-weight: 600; }
-  #map.adding, #map.linking { cursor: crosshair; }
+  .toolgroup { display: flex; gap: 2px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 2px; }
+  .toolgroup button { border: none; border-radius: 4px; background: transparent; }
+  .toolgroup button:hover { border-color: transparent; background: var(--panel); }
+  .toolgroup button.on { background: var(--accent-2); color: #06121c; }
+  #map.adding, #map.linking, #map.splitting, #map.rerouting { cursor: crosshair; }
   #map.moving { cursor: grab; }
+  #map.deleting { cursor: crosshair; }
   #map.node-dragging, #map.node-dragging * { cursor: grabbing !important; }
+  #map.select-dragging, #map.select-dragging * { cursor: crosshair !important; }
   .node-icon.sel { filter: drop-shadow(0 0 3px #ff9f43) drop-shadow(0 0 6px #ff9f43); }
+  .node-icon.danger-hover { filter: drop-shadow(0 0 4px #ff5b5b) drop-shadow(0 0 8px #ff5b5b); }
+  .select-box {
+    position: absolute; border: 1px dashed var(--accent);
+    background: rgba(63, 167, 255, .15); pointer-events: none; z-index: 500;
+  }
+  #stMsg button.msg-action { padding: 2px 8px; font-size: 11px; margin-left: 8px; }
   .spacer { flex: 1; }
   #main { flex: 1; display: flex; min-height: 0; }
   #sidebar {
@@ -740,6 +752,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     width: 100%; background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
     border-radius: 6px; padding: 6px 8px; font: inherit;
   }
+  .label-filter { width: 190px; flex: none; }
   .pad { padding: 6px 12px 10px; }
   #status {
     padding: 6px 12px; background: var(--panel); border-top: 1px solid var(--border);
@@ -807,9 +820,16 @@ svg.leaflet-image-layer.leaflet-interactive path {
   <input id="fileKml" type="file" accept=".kml,.kmz,.xml" hidden />
   <button id="btnImportCsv">Import CSV&hellip;</button>
   <input id="fileCsv" type="file" accept=".csv,.txt" hidden />
-  <button id="btnAddNode" title="Click, then click the map to place nodes">Add node: off</button>
-  <button id="btnAddPath" title="Click, then click two nodes to connect them (existing paths become click-through)">Add path: off</button>
-  <button id="btnMoveNode" title="Click, then drag a node to reposition it; connected paths follow in real time">Move node: off</button>
+  <div class="toolgroup" id="toolGroup">
+    <button data-tool="select" class="on" title="Click a node or path to select it; drag a box or shift-click to select several (V)">Select</button>
+    <button data-tool="node" title="Click, then click the map to place nodes (N)">Add node</button>
+    <button data-tool="path" title="Click, then click two nodes to connect them; existing paths become click-through (P)">Add path</button>
+    <button data-tool="move" title="Drag a node (or the whole selection) to reposition it; connected paths follow in real time (M)">Move</button>
+    <button data-tool="delete" title="Click a node or path to remove it immediately (D)">Delete</button>
+    <button data-tool="split" title="Click a path to insert a new node at that point and split it in two (S)">Split path</button>
+    <button data-tool="reroute" title="Drag a path's end onto a different node to rewire it (R)">Re-route</button>
+  </div>
+  <button id="btnMerge" title="Merge the two selected nodes into one, keeping the more-connected one" disabled>Merge nodes</button>
   <button id="btnNaming" title="Set the auto-naming format for nodes and paths">Naming&hellip;</button>
   <button id="btnExportCsv" disabled>Export CSV</button>
   <button id="btnExportKml" disabled>Export KML</button>
@@ -817,9 +837,14 @@ svg.leaflet-image-layer.leaflet-interactive path {
   <select id="basemap" title="Basemap"></select>
   <button id="btnRecheckMaps" title="Re-test which map providers your network can reach">Recheck maps</button>
   <button id="btnFit" title="Zoom the map to fit every node (F)" disabled>Zoom to fit</button>
-  <button id="btnLabels">Labels: on</button>
+  <button id="btnLabelsNodes" title="Show or hide the name label under each node">Node labels: on</button>
+  <input id="nodeLabelFilter" type="text" class="label-filter" placeholder="Hide node labels containing&hellip;"
+    title="Node names containing this text (case-insensitive) will not show a label, even when Node labels is on. Leave empty to show all node labels." />
+  <button id="btnLabelsPaths" title="Show or hide the name label on each path">Path labels: on</button>
   <button id="btnFileStyles" title="Use the colors, icon sizes and line widths defined in the loaded KML/KMZ">File styles: on</button>
+  <button id="btnSnap" title="Snap to existing nodes while placing or moving, within a few pixels">Snap: on</button>
   <button id="btnUndo" disabled>Undo</button>
+  <button id="btnRedo" disabled>Redo</button>
   <button id="btnClear" class="danger" disabled>Clear links</button>
   <button id="btnDashboard" disabled>Dashboard</button>
 </header>
@@ -859,6 +884,21 @@ svg.leaflet-image-layer.leaflet-interactive path {
   <div class="btns">
     <button id="dlgCancel">Cancel</button>
     <button id="dlgOk" class="primary">Save</button>
+  </div>
+</dialog>
+
+<dialog id="editNodeDlg">
+  <h3>Edit node</h3>
+  <div class="sub" style="color:var(--muted);font-size:12px">Set the name and exact coordinates.</div>
+  <label class="lbl" for="editNodeName">Name</label>
+  <input id="editNodeName" type="text" autocomplete="off" />
+  <label class="lbl" for="editNodeLat">Latitude</label>
+  <input id="editNodeLat" type="number" step="any" min="-90" max="90" autocomplete="off" />
+  <label class="lbl" for="editNodeLon">Longitude</label>
+  <input id="editNodeLon" type="number" step="any" min="-180" max="180" autocomplete="off" />
+  <div class="btns">
+    <button id="editNodeCancel">Cancel</button>
+    <button id="editNodeOk" class="primary">Save</button>
   </div>
 </dialog>
 
@@ -943,17 +983,29 @@ svg.leaflet-image-layer.leaflet-interactive path {
     nodes: [],        // {id,name,lat,lon,desc,marker}
     links: [],        // {id,name,a,b,line}
     byId: {},
-    selected: null,   // node id awaiting a partner
-    activeLink: null, // link id highlighted
-    labels: true,
+    tool: "select",     // current editing tool: select|node|path|move|delete|split|reroute
+    selection: { nodes: [], links: [] }, // multi-select
+    linkAnchor: null,   // node id awaiting a partner, "Add path" tool only
+    labelsNodes: true,
+    labelsPaths: true,
+    nodeLabelFilter: "", // node names containing this text (case-insensitive) skip their label
     seq: 1,           // next link sequence number
     nodeSeq: 1,       // next manually-added node sequence number
-    addMode: false,   // "Add node": next map click places a node
-    pathMode: false,  // "Add path": clicking two nodes connects them; paths are click-through
-    moveMode: false,  // "Move node": dragging a node is only allowed while this is on
     fileStyles: true, // honor <Style> from the loaded KML/KMZ instead of the app palette
+    snap: true,       // snap to existing nodes while placing/moving
     assets: []        // blob URLs created for icons extracted from a KMZ
   };
+
+  var TOOLS = [
+    { id: "select", label: "Select" },
+    { id: "node", label: "Add node" },
+    { id: "path", label: "Add path" },
+    { id: "move", label: "Move" },
+    { id: "delete", label: "Delete" },
+    { id: "split", label: "Split path" },
+    { id: "reroute", label: "Re-route" }
+  ];
+  var KEY_TO_TOOL = { v: "select", n: "node", p: "path", m: "move", d: "delete", s: "split", r: "reroute" };
 
   var NODE_TEMPLATE_KEY = "connecting-paths-node-template";
   var PATH_TEMPLATE_KEY = "connecting-paths-path-template";
@@ -987,7 +1039,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   /* ---------------- map ---------------- */
 
-  var map = L.map("map", { zoomControl: true, preferCanvas: true }).setView([0, 0], 2);
+  var map = L.map("map", { zoomControl: true, preferCanvas: true, boxZoom: false }).setView([0, 0], 2);
   L.control.scale({ imperial: false }).addTo(map);
   window.__testMap = map;
 
@@ -1005,7 +1057,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
   var BASEMAP_KEY = "connecting-paths-basemap";
   var CUSTOM_KEY = "connecting-paths-custom-tiles";
   var FILE_STYLES_KEY = "connecting-paths-file-styles";
-  var LABELS_KEY = "connecting-paths-labels";
+  var LABELS_NODES_KEY = "connecting-paths-labels-nodes";
+  var LABELS_PATHS_KEY = "connecting-paths-labels-paths";
+  var NODE_LABEL_FILTER_KEY = "connecting-paths-node-label-filter";
+  var SNAP_KEY = "connecting-paths-snap";
   var currentBase = null;
   var basemapSel = document.getElementById("basemap");
 
@@ -1144,10 +1199,22 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   function $(id) { return document.getElementById(id); }
 
-  function msg(text, kind) {
+  function msg(text, kind, actionLabel, actionFn) {
     var el = $("stMsg");
     el.textContent = text || "";
     el.style.color = kind === "err" ? "var(--danger)" : kind === "ok" ? "var(--ok)" : "var(--muted)";
+    if (actionLabel && actionFn) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "msg-action";
+      btn.textContent = actionLabel;
+      btn.addEventListener("click", function () {
+        clearTimeout(msg._t);
+        el.textContent = "";
+        actionFn();
+      });
+      el.appendChild(btn);
+    }
     if (text) {
       clearTimeout(msg._t);
       msg._t = setTimeout(function () { el.textContent = ""; }, 4000);
@@ -1441,8 +1508,77 @@ svg.leaflet-image-layer.leaflet-interactive path {
     return (st && st.iconUrl && iconStatus[st.iconUrl]) ? st.iconUrl : null;
   }
 
+  /* ---------------- selection ---------------- */
+
+  function isNodeSelected(id) { return state.selection.nodes.indexOf(id) >= 0; }
+  function isLinkSelected(id) { return state.selection.links.indexOf(id) >= 0; }
+
+  function refreshSelectionUI() {
+    refreshNodeStyles();
+    drawLinks();
+    renderNodes();
+    renderLinks();
+    updateStatus();
+    updateMergeButton();
+  }
+
+  function selectNodesOnly(ids) {
+    state.selection = { nodes: ids.slice(), links: [] };
+    refreshSelectionUI();
+  }
+
+  function selectLinksOnly(ids) {
+    state.selection = { nodes: [], links: ids.slice() };
+    refreshSelectionUI();
+  }
+
+  function toggleNodeInSelection(id) {
+    var idx = state.selection.nodes.indexOf(id);
+    if (idx >= 0) state.selection.nodes.splice(idx, 1);
+    else { state.selection.nodes.push(id); state.selection.links = []; }
+    refreshSelectionUI();
+  }
+
+  function toggleLinkInSelection(id) {
+    var idx = state.selection.links.indexOf(id);
+    if (idx >= 0) state.selection.links.splice(idx, 1);
+    else { state.selection.links.push(id); state.selection.nodes = []; }
+    refreshSelectionUI();
+  }
+
+  function clearSelection() {
+    if (!state.selection.nodes.length && !state.selection.links.length) return;
+    state.selection = { nodes: [], links: [] };
+    refreshSelectionUI();
+  }
+
+  function handleNodeClick(id, e) {
+    var oe = e && e.originalEvent;
+    var shift = !!((e && e.shiftKey) || (oe && (oe.shiftKey || oe.metaKey || oe.ctrlKey)) || (e && (e.metaKey || e.ctrlKey)));
+    if (shift) { toggleNodeInSelection(id); return; }
+    selectNodesOnly([id]);
+  }
+
+  function handleLinkClick(id, e) {
+    var oe = e && e.originalEvent;
+    var shift = !!((e && e.shiftKey) || (oe && (oe.shiftKey || oe.metaKey || oe.ctrlKey)) || (e && (e.metaKey || e.ctrlKey)));
+    if (shift) { toggleLinkInSelection(id); return; }
+    selectLinksOnly([id]);
+  }
+
+  function updateMergeButton() {
+    var btn = $("btnMerge");
+    if (!btn) return;
+    btn.disabled = !(state.selection.nodes.length === 2 && state.selection.links.length === 0);
+  }
+
+  function nodeLabelHidden(name) {
+    if (!state.nodeLabelFilter) return false;
+    return (name || "").toLowerCase().indexOf(state.nodeLabelFilter.toLowerCase()) !== -1;
+  }
+
   function nodeStyle(node) {
-    var isSel = state.selected === node.id;
+    var isSel = isNodeSelected(node.id);
     var used = node.degree > 0;
     var st = styleOf(node);
     var base = (st && st.color) ? st.color : used ? "#35c46b" : "#3fa7ff";
@@ -1466,7 +1602,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
       iconSize: [w, h],
       iconAnchor: [w / 2, h / 2],
       tooltipAnchor: [0, -h / 2],
-      className: "node-icon" + (state.selected === node.id ? " sel" : "")
+      className: "node-icon" + (isNodeSelected(node.id) ? " sel" : "")
     });
   }
 
@@ -1477,27 +1613,70 @@ svg.leaflet-image-layer.leaflet-interactive path {
       var m = url
         ? L.marker([node.lat, node.lon], { icon: nodeIcon(node, url), keyboard: false })
         : L.circleMarker([node.lat, node.lon], nodeStyle(node));
-      m.on("mousedown", function (e) { if (state.moveMode) beginNodeDrag(node, m, e); });
+      m.on("mousedown", function (e) {
+        if (state.tool === "move") { beginNodeDrag(node, m, e); return; }
+        if (state.tool === "select") { L.DomEvent.stop(e); }
+      });
       m.on("click", function (e) {
         L.DomEvent.stopPropagation(e);
-        if (suppressNodeClick) { suppressNodeClick = false; return; }
-        if (state.addMode) { addNode(e.latlng); return; }
-        pickNode(node.id);
+        if (suppressClick) { suppressClick = false; return; }
+        nodeClicked(node, e);
+      });
+      m.on("mouseover", function () {
+        if (state.tool !== "delete") return;
+        if (m.setStyle) m.setStyle({ color: "#ff5b5b", fillColor: "#ff5b5b" });
+        var el = m.getElement && m.getElement();
+        if (el) el.classList.add("danger-hover");
+      });
+      m.on("mouseout", function () {
+        if (state.tool !== "delete") return;
+        if (m.setStyle) m.setStyle(nodeStyle(node));
+        var el = m.getElement && m.getElement();
+        if (el) el.classList.remove("danger-hover");
       });
       m.bindTooltip(node.name, {
-        permanent: state.labels, direction: "top", offset: [0, -6], className: "node-label"
+        permanent: state.labelsNodes && !nodeLabelHidden(node.name), direction: "top", offset: [0, -6], className: "node-label"
       });
       m.addTo(nodeLayer);
       node.marker = m;
     });
   }
 
+  function nodeClicked(node, e) {
+    switch (state.tool) {
+      case "node": addNode(e.latlng); return;
+      case "path": pickNodeForPath(node.id); return;
+      case "delete": deleteNode(node.id); return;
+      default: handleNodeClick(node.id, e);
+    }
+  }
+
   /* ---------------- moving nodes ---------------- */
 
-  /* A click and a drag start the same way (mousedown on a node), so the first few
-     pixels of movement are absorbed as a threshold before it commits to a drag -
-     that keeps plain node selection/clicking exactly as responsive as before. */
-  var suppressNodeClick = false;
+  /* A click and a drag start the same way (mousedown), so the first few pixels of
+     movement are absorbed as a threshold before it commits to a drag - that keeps
+     plain clicking exactly as responsive as before. Shared by node drag, box-select
+     and re-route. */
+  var suppressClick = false;
+
+  function findNodeNear(latlng, excludeIds, pxRadius) {
+    pxRadius = pxRadius || 12;
+    var p = map.latLngToContainerPoint(latlng);
+    var best = null, bestDist = pxRadius;
+    state.nodes.forEach(function (n) {
+      if (excludeIds && excludeIds.indexOf(n.id) >= 0) return;
+      var np = map.latLngToContainerPoint([n.lat, n.lon]);
+      var d = p.distanceTo(np);
+      if (d < bestDist) { bestDist = d; best = n; }
+    });
+    return best;
+  }
+
+  function snapLatLng(latlng, excludeIds) {
+    if (!state.snap) return latlng;
+    var near = findNodeNear(latlng, excludeIds);
+    return near ? L.latLng(near.lat, near.lon) : latlng;
+  }
 
   function updateLinksForNode(id) {
     state.links.forEach(function (l) {
@@ -1513,7 +1692,18 @@ svg.leaflet-image-layer.leaflet-interactive path {
     // keeps bubbling to the map container's own mousedown listener and the map's pan
     // handler can start racing this drag, which is what made dragging feel flaky.
     if (downEvt.originalEvent) L.DomEvent.stopPropagation(downEvt.originalEvent);
-    suppressNodeClick = false; // a stray flag from an interrupted previous drag shouldn't eat this click
+    suppressClick = false; // a stray flag from an interrupted previous drag shouldn't eat this click
+    /* Dragging a node that's already part of a multi-node selection moves the whole
+       group together; otherwise only the node under the cursor moves. */
+    var groupIds = (isNodeSelected(node.id) && state.selection.nodes.length > 1)
+      ? state.selection.nodes.slice()
+      : [node.id];
+    var startLatLng = downEvt.latlng;
+    var startPositions = {};
+    groupIds.forEach(function (id) {
+      var n = state.byId[id];
+      if (n) startPositions[id] = { lat: n.lat, lon: n.lon };
+    });
     var startPoint = downEvt.containerPoint;
     var dragging = false;
     // Disabled right away (not only once the drag is confirmed) so panning never wins
@@ -1524,13 +1714,21 @@ svg.leaflet-image-layer.leaflet-interactive path {
       if (!dragging) {
         if (startPoint.distanceTo(e.containerPoint) < 4) return;
         dragging = true;
-        pushUndo("move " + node.name);
+        pushUndo(groupIds.length > 1 ? "move " + groupIds.length + " nodes" : "move " + node.name);
         $("map").classList.add("node-dragging");
       }
-      node.lat = e.latlng.lat;
-      node.lon = e.latlng.lng;
-      marker.setLatLng(e.latlng);
-      updateLinksForNode(node.id);
+      var cursor = snapLatLng(e.latlng, groupIds);
+      var dLat = cursor.lat - startLatLng.lat;
+      var dLon = cursor.lng - startLatLng.lng;
+      groupIds.forEach(function (id) {
+        var n = state.byId[id];
+        var start = startPositions[id];
+        if (!n || !start) return;
+        n.lat = start.lat + dLat;
+        n.lon = start.lon + dLon;
+        if (n.marker) n.marker.setLatLng([n.lat, n.lon]);
+        updateLinksForNode(id);
+      });
     }
 
     function onUp() {
@@ -1539,14 +1737,15 @@ svg.leaflet-image-layer.leaflet-interactive path {
       map.dragging.enable();
       $("map").classList.remove("node-dragging");
       if (!dragging) return;
-      suppressNodeClick = true;
+      suppressClick = true;
       recount();
       renderNodes();
       renderLinks();
       updateStatus();
       refreshDashboardIfOpen();
       save();
-      msg("Moved " + node.name + " \u2014 Ctrl+Z to undo.", "ok");
+      msg((groupIds.length > 1 ? "Moved " + groupIds.length + " nodes" : "Moved " + node.name) +
+        " \u2014 Ctrl+Z to undo.", "ok");
     }
 
     map.on("mousemove", onMove);
@@ -1558,31 +1757,55 @@ svg.leaflet-image-layer.leaflet-interactive path {
       if (!node.marker) return;
       if (node.marker.setStyle) { node.marker.setStyle(nodeStyle(node)); return; }
       var el = node.marker.getElement();
-      if (el) el.classList.toggle("sel", state.selected === node.id);
+      if (el) el.classList.toggle("sel", isNodeSelected(node.id));
     });
+  }
+
+  function linkStyle(l) {
+    var st = state.fileStyles ? l.style : null;
+    var active = isLinkSelected(l.id);
+    return {
+      color: active ? "#ff9f43" : (st && st.color) ? st.color : "#3fa7ff",
+      weight: (st && st.width ? st.width : 3) + (active ? 2 : 0),
+      opacity: active ? 0.9 : (st && st.opacity != null ? Math.max(0.15, st.opacity) : 0.9)
+    };
   }
 
   function drawLink(l) {
     var a = state.byId[l.a], b = state.byId[l.b];
-    var st = state.fileStyles ? l.style : null;
-    var active = state.activeLink === l.id;
     /* While "Add path" is on, paths are non-interactive so clicks fall through to the
        nodes underneath — otherwise a node with many connections is impossible to hit. */
-    var line = L.polyline([[a.lat, a.lon], [b.lat, b.lon]], {
-      color: active ? "#ff9f43" : (st && st.color) ? st.color : "#3fa7ff",
-      weight: (st && st.width ? st.width : 3) + (active ? 2 : 0),
-      opacity: active ? 0.9 : (st && st.opacity != null ? Math.max(0.15, st.opacity) : 0.9),
-      interactive: !state.pathMode
-    });
-    if (!state.pathMode) {
+    var opts = linkStyle(l);
+    opts.interactive = state.tool !== "path";
+    var line = L.polyline([[a.lat, a.lon], [b.lat, b.lon]], opts);
+    if (state.tool !== "path") {
       line.on("click", function (e) {
         L.DomEvent.stopPropagation(e);
-        setActiveLink(l.id);
+        linkClicked(l, e);
+      });
+      line.on("mousedown", function (e) {
+        if (state.tool === "reroute") beginReroute(l, e);
+      });
+      line.on("mouseover", function () {
+        if (state.tool !== "delete") return;
+        line.setStyle({ color: "#ff5b5b", weight: linkStyle(l).weight + 1 });
+      });
+      line.on("mouseout", function () {
+        if (state.tool !== "delete") return;
+        line.setStyle(linkStyle(l));
       });
     }
-    line.bindTooltip(l.name, { permanent: state.labels, direction: "center", className: "link-label" });
+    line.bindTooltip(l.name, { permanent: state.labelsPaths, direction: "center", className: "link-label" });
     line.addTo(linkLayer);
     l.line = line;
+  }
+
+  function linkClicked(l, e) {
+    switch (state.tool) {
+      case "delete": deleteLink(l.id); return;
+      case "split": splitLink(l, e.latlng); return;
+      default: handleLinkClick(l.id, e);
+    }
   }
 
   function drawLinks() {
@@ -1596,67 +1819,11 @@ svg.leaflet-image-layer.leaflet-interactive path {
     });
   }
 
-  /* ---------------- selection & linking ---------------- */
-
-  function clearSelection() {
-    if (!state.selected) return;
-    state.selected = null;
-    refreshNodeStyles();
-    renderNodes();
-    updateStatus();
-  }
-
-  function selectNode(id) {
-    state.selected = state.selected === id ? null : id;
-    refreshNodeStyles();
-    renderNodes();
-    updateStatus();
-  }
-
-  function pickNode(id) {
-    if (!state.pathMode) { selectNode(id); return; }
-    if (!state.selected) {
-      state.selected = id;
-      refreshNodeStyles();
-      renderNodes();
-      updateStatus();
-      msg("Now click the second node to connect.");
-      return;
-    }
-    if (state.selected === id) {
-      state.selected = null;
-      refreshNodeStyles();
-      renderNodes();
-      updateStatus();
-      return;
-    }
-    var a = state.selected, b = id;
-    var dup = state.links.some(function (l) { return pairKey(l.a, l.b) === pairKey(a, b); });
-    if (dup) {
-      /* Keep the current node selected so a mis-click mid-chain doesn't lose your place. */
-      msg("Those two nodes are already connected.", "err");
-      return;
-    }
-    var na = state.byId[a], nb = state.byId[b];
-    var linkId = "l" + (state.seq++);
-    var name = pathName(na, nb, linkId);
-    pushUndo("connect " + name);
-    state.links.push({ id: linkId, name: name, a: a, b: b });
-    /* Chain linking: the node just connected stays selected, so drawing a route
-       A-B-C-D is one click per node instead of two. Esc or a map click stops. */
-    state.selected = b;
-    recount();
-    drawLinks();
-    refreshNodeStyles();
-    renderAll();
-    save();
-    msg("Connected: " + name + " \u00b7 " + fmtLen(haversine(na, nb)) +
-      " \u00b7 click the next node to continue, Esc to stop.", "ok");
-  }
-
   /* Path names are generated from the configurable path template (default "FROM\u2194TO",
      upper case). {n} in the template uses the link's own sequence number, so it stays
-     stable across restores/re-renders instead of shifting each time it's recomputed. */
+     stable across restores/re-renders instead of shifting each time it's recomputed.
+     A manually-renamed link sets customName so it survives node renames and template
+     changes instead of being silently recomputed. */
   function pathName(a, b, id) {
     var n = id ? parseInt(String(id).replace(/^\D+/, ""), 10) : NaN;
     return applyPathTemplate(getPathTemplate(), a, b, isFinite(n) ? n : 0);
@@ -1670,10 +1837,41 @@ svg.leaflet-image-layer.leaflet-interactive path {
     return rawName(n).toUpperCase();
   }
 
-  function setActiveLink(id) {
-    state.activeLink = state.activeLink === id ? null : id;
+  function pickNodeForPath(id) {
+    if (!state.linkAnchor) {
+      state.linkAnchor = id;
+      selectNodesOnly([id]);
+      msg("Now click the second node to connect.");
+      return;
+    }
+    if (state.linkAnchor === id) {
+      state.linkAnchor = null;
+      clearSelection();
+      return;
+    }
+    var a = state.linkAnchor, b = id;
+    var dup = state.links.some(function (l) { return pairKey(l.a, l.b) === pairKey(a, b); });
+    if (dup) {
+      /* Keep the current node selected so a mis-click mid-chain doesn't lose your place. */
+      msg("Those two nodes are already connected.", "err");
+      return;
+    }
+    var na = state.byId[a], nb = state.byId[b];
+    var linkId = "l" + (state.seq++);
+    var name = pathName(na, nb, linkId);
+    pushUndo("connect " + name);
+    state.links.push({ id: linkId, name: name, a: a, b: b });
+    /* Chain linking: the node just connected stays selected, so drawing a route
+       A-B-C-D is one click per node instead of two. Esc or a map click stops. */
+    state.linkAnchor = b;
+    selectNodesOnly([b]);
+    recount();
     drawLinks();
-    renderLinks();
+    refreshNodeStyles();
+    renderAll();
+    save();
+    msg("Connected: " + name + " \u00b7 " + fmtLen(haversine(na, nb)) +
+      " \u00b7 click the next node to continue, Esc to stop.", "ok");
   }
 
   function deleteLink(id) {
@@ -1681,12 +1879,45 @@ svg.leaflet-image-layer.leaflet-interactive path {
     if (!link) return;
     pushUndo("delete " + link.name);
     state.links = state.links.filter(function (l) { return l.id !== id; });
-    if (state.activeLink === id) state.activeLink = null;
+    var idx = state.selection.links.indexOf(id);
+    if (idx >= 0) state.selection.links.splice(idx, 1);
     recount();
     drawLinks();
     refreshNodeStyles();
     renderAll();
     save();
+    msg("Path deleted.", "ok", "Undo", undo);
+  }
+
+  function deleteSelection() {
+    var nodeIds = state.selection.nodes.slice();
+    var linkIds = state.selection.links.slice();
+    if (!nodeIds.length && !linkIds.length) return;
+    var extraLinkIds = state.links.filter(function (l) {
+      return nodeIds.indexOf(l.a) >= 0 || nodeIds.indexOf(l.b) >= 0;
+    }).map(function (l) { return l.id; });
+    var allLinkIds = linkIds.concat(extraLinkIds.filter(function (id) { return linkIds.indexOf(id) === -1; }));
+    var label = nodeIds.length && allLinkIds.length
+      ? "delete " + nodeIds.length + " node(s) and " + allLinkIds.length + " path(s)"
+      : nodeIds.length
+        ? "delete " + nodeIds.length + " node(s)"
+        : "delete " + allLinkIds.length + " path(s)";
+    pushUndo(label);
+    state.links = state.links.filter(function (l) { return allLinkIds.indexOf(l.id) === -1; });
+    nodeIds.forEach(function (id) {
+      delete state.byId[id];
+    });
+    state.nodes = state.nodes.filter(function (n) { return nodeIds.indexOf(n.id) === -1; });
+    state.selection = { nodes: [], links: [] };
+    state.linkAnchor = null;
+    recount();
+    drawNodes();
+    drawLinks();
+    renderAll();
+    save();
+    msg("Deleted " + (nodeIds.length ? nodeIds.length + " node(s)" : "") +
+      (nodeIds.length && allLinkIds.length ? " and " : "") +
+      (allLinkIds.length ? allLinkIds.length + " path(s)" : "") + ".", "ok", "Undo", undo);
   }
 
   function recount() {
@@ -1697,13 +1928,15 @@ svg.leaflet-image-layer.leaflet-interactive path {
     });
   }
 
-  /* ---------------- undo ----------------
+  /* ---------------- undo / redo ----------------
      Every destructive or structural edit pushes a snapshot first, so Undo/Ctrl+Z can
      step back through node deletions, renames, imports and "Clear links" - not just
-     the last connection. */
+     the last connection. Redo/Ctrl+Shift+Z (or Ctrl+Y) steps forward again, as long as
+     no new edit has happened since. */
 
   var UNDO_LIMIT = 50;
   var undoStack = [];
+  var redoStack = [];
 
   function snapshot() {
     return {
@@ -1711,58 +1944,301 @@ svg.leaflet-image-layer.leaflet-interactive path {
         return { id: n.id, name: n.name, lat: n.lat, lon: n.lon, alt: n.alt, desc: n.desc, style: n.style || null };
       }),
       links: state.links.map(function (l) {
-        return { id: l.id, name: l.name, a: l.a, b: l.b, style: l.style || null };
+        return { id: l.id, name: l.name, a: l.a, b: l.b, style: l.style || null, customName: !!l.customName };
       }),
       seq: state.seq,
       nodeSeq: state.nodeSeq,
-      selected: state.selected,
-      activeLink: state.activeLink
+      selection: { nodes: state.selection.nodes.slice(), links: state.selection.links.slice() }
     };
   }
 
   function pushUndo(label) {
     undoStack.push({ label: label, snap: snapshot() });
     if (undoStack.length > UNDO_LIMIT) undoStack.shift();
-    updateUndoButton();
+    redoStack = [];
+    updateHistoryButtons();
   }
 
   function clearUndo() {
     undoStack = [];
-    updateUndoButton();
+    redoStack = [];
+    updateHistoryButtons();
   }
 
-  function updateUndoButton() {
-    var btn = $("btnUndo");
-    if (!btn) return;
-    var top = undoStack[undoStack.length - 1];
-    btn.disabled = !top;
-    btn.title = top ? "Undo: " + top.label + " (Ctrl+Z)" : "Nothing to undo";
+  function updateHistoryButtons() {
+    var undoBtn = $("btnUndo");
+    if (undoBtn) {
+      var top = undoStack[undoStack.length - 1];
+      undoBtn.disabled = !top;
+      undoBtn.title = top ? "Undo: " + top.label + " (Ctrl+Z)" : "Nothing to undo";
+    }
+    var redoBtn = $("btnRedo");
+    if (redoBtn) {
+      var next = redoStack[redoStack.length - 1];
+      redoBtn.disabled = !next;
+      redoBtn.title = next ? "Redo: " + next.label + " (Ctrl+Shift+Z)" : "Nothing to redo";
+    }
   }
 
-  function undo() {
-    var entry = undoStack.pop();
-    if (!entry) return;
-    var s = entry.snap;
+  function applySnapshot(s) {
     state.nodes = s.nodes.map(function (n) {
       return { id: n.id, name: n.name, lat: n.lat, lon: n.lon, alt: n.alt, desc: n.desc, style: n.style, degree: 0 };
     });
     state.byId = {};
     state.nodes.forEach(function (n) { state.byId[n.id] = n; });
     state.links = s.links.map(function (l) {
-      return { id: l.id, name: l.name, a: l.a, b: l.b, style: l.style };
+      return { id: l.id, name: l.name, a: l.a, b: l.b, style: l.style, customName: !!l.customName };
     });
     state.seq = s.seq;
     state.nodeSeq = s.nodeSeq;
-    state.selected = state.byId[s.selected] ? s.selected : null;
-    state.activeLink = state.links.some(function (l) { return l.id === s.activeLink; }) ? s.activeLink : null;
+    state.selection = {
+      nodes: s.selection.nodes.filter(function (id) { return state.byId[id]; }),
+      links: s.selection.links.filter(function (id) { return state.links.some(function (l) { return l.id === id; }); })
+    };
+    state.linkAnchor = state.byId[state.linkAnchor] ? state.linkAnchor : null;
     recount();
     drawNodes();
     drawLinks();
     renderAll();
     applyFileStyleAvailability();
     save();
-    updateUndoButton();
+    updateHistoryButtons();
+  }
+
+  function undo() {
+    var entry = undoStack.pop();
+    if (!entry) return;
+    redoStack.push({ label: entry.label, snap: snapshot() });
+    applySnapshot(entry.snap);
     msg("Undone: " + entry.label, "ok");
+  }
+
+  function redo() {
+    var entry = redoStack.pop();
+    if (!entry) return;
+    undoStack.push({ label: entry.label, snap: snapshot() });
+    applySnapshot(entry.snap);
+    msg("Redone: " + entry.label, "ok");
+  }
+
+  /* ---------------- topology editing: split / re-route / merge ---------------- */
+
+  /* Projects latlng onto segment a-b using lat/lon directly as a flat x/y plane -
+     an acceptable local-scale approximation, consistent with how the rest of the
+     app already treats short segments (e.g. haversine for length only, not shape). */
+  function projectPointOnSegment(p, a, b) {
+    var abx = b.lon - a.lon, aby = b.lat - a.lat;
+    var apx = p.lng - a.lon, apy = p.lat - a.lat;
+    var lenSq = abx * abx + aby * aby;
+    var t = lenSq > 0 ? (apx * abx + apy * aby) / lenSq : 0;
+    t = Math.max(0.02, Math.min(0.98, t));
+    return { lat: a.lat + aby * t, lon: a.lon + abx * t };
+  }
+
+  function splitLink(l, latlng) {
+    var a = state.byId[l.a], b = state.byId[l.b];
+    if (!a || !b) return;
+    var p = projectPointOnSegment(latlng, a, b);
+    pushUndo("split " + l.name);
+    var n = state.nodeSeq++;
+    var id = "m" + n;
+    while (state.byId[id]) { n = state.nodeSeq++; id = "m" + n; }
+    var node = {
+      id: id, name: applyNodeTemplate(getNodeTemplate(), n),
+      lat: p.lat, lon: p.lon, alt: 0, desc: "", degree: 0
+    };
+    state.nodes.push(node);
+    state.byId[node.id] = node;
+    state.links = state.links.filter(function (x) { return x.id !== l.id; });
+    var id1 = "l" + (state.seq++);
+    var id2 = "l" + (state.seq++);
+    state.links.push({ id: id1, name: pathName(a, node, id1), a: a.id, b: node.id, style: l.style || null });
+    state.links.push({ id: id2, name: pathName(node, b, id2), a: node.id, b: b.id, style: l.style || null });
+    recount();
+    drawNodes();
+    drawLinks();
+    renderAll();
+    save();
+    selectNodesOnly([node.id]);
+    msg("Path split at new node " + node.name + " \u2014 Ctrl+Z to undo.", "ok");
+  }
+
+  function beginReroute(l, downEvt) {
+    L.DomEvent.stop(downEvt);
+    if (downEvt.originalEvent) L.DomEvent.stopPropagation(downEvt.originalEvent);
+    suppressClick = false;
+    var a = state.byId[l.a], b = state.byId[l.b];
+    if (!a || !b) return;
+    var pa = map.latLngToContainerPoint([a.lat, a.lon]);
+    var pb = map.latLngToContainerPoint([b.lat, b.lon]);
+    var startPoint = downEvt.containerPoint;
+    /* Whichever endpoint is nearer the mousedown point is the one that moves. */
+    var movingEnd = startPoint.distanceTo(pa) <= startPoint.distanceTo(pb) ? "a" : "b";
+    var fixedNode = movingEnd === "a" ? b : a;
+    var dragging = false;
+    var preview = null;
+    var hoverNode = null;
+    map.dragging.disable();
+
+    function setHover(n) {
+      if (hoverNode === n) return;
+      if (hoverNode && hoverNode.marker) {
+        var el = hoverNode.marker.getElement && hoverNode.marker.getElement();
+        if (el) el.classList.remove("danger-hover");
+        else if (hoverNode.marker.setStyle) hoverNode.marker.setStyle(nodeStyle(hoverNode));
+      }
+      hoverNode = n;
+      if (hoverNode && hoverNode.marker) {
+        var el2 = hoverNode.marker.getElement && hoverNode.marker.getElement();
+        if (el2) el2.classList.add("danger-hover");
+        else if (hoverNode.marker.setStyle) hoverNode.marker.setStyle({ color: "#ff9f43", fillColor: "#ff9f43" });
+      }
+    }
+
+    function onMove(e) {
+      if (!dragging) {
+        if (startPoint.distanceTo(e.containerPoint) < 4) return;
+        dragging = true;
+        $("map").classList.add("node-dragging");
+        preview = L.polyline([[fixedNode.lat, fixedNode.lon], e.latlng], {
+          color: "#ff9f43", weight: 2, dashArray: "6 6", interactive: false
+        }).addTo(linkLayer);
+      }
+      preview.setLatLngs([[fixedNode.lat, fixedNode.lon], e.latlng]);
+      setHover(findNodeNear(e.latlng, [fixedNode.id]));
+    }
+
+    function onUp(e) {
+      map.off("mousemove", onMove);
+      map.off("mouseup", onUp);
+      map.dragging.enable();
+      $("map").classList.remove("node-dragging");
+      if (preview) { linkLayer.removeLayer(preview); preview = null; }
+      setHover(null);
+      if (!dragging) {
+        // No drag happened - treat it as a normal click on the link.
+        linkClicked(l, e);
+        return;
+      }
+      suppressClick = true;
+      var target = findNodeNear(e.latlng, [fixedNode.id]);
+      if (!target) { msg("Drop it on another node to re-route \u2014 nothing changed.", "err"); return; }
+      if (target.id === fixedNode.id) return;
+      var newA = movingEnd === "a" ? target.id : fixedNode.id;
+      var newB = movingEnd === "a" ? fixedNode.id : target.id;
+      var dup = state.links.some(function (x) { return x.id !== l.id && pairKey(x.a, x.b) === pairKey(newA, newB); });
+      if (dup) { msg("Those two nodes are already connected.", "err"); return; }
+      pushUndo("re-route " + l.name);
+      l.a = newA; l.b = newB;
+      if (!l.customName) l.name = pathName(state.byId[l.a], state.byId[l.b], l.id);
+      recount();
+      drawLinks();
+      refreshNodeStyles();
+      renderAll();
+      save();
+      msg("Path re-routed \u2014 Ctrl+Z to undo.", "ok");
+    }
+
+    map.on("mousemove", onMove);
+    map.on("mouseup", onUp);
+  }
+
+  function mergeSelectedNodes() {
+    if (state.selection.nodes.length !== 2 || state.selection.links.length !== 0) return;
+    mergeNodes(state.selection.nodes[0], state.selection.nodes[1]);
+  }
+
+  /* Merges two nodes into one: the higher-degree node (more existing connections)
+     is kept, the other is removed and its links are rewired onto the survivor -
+     dropping any link that would become a self-link or a duplicate of one that
+     already exists. */
+  function mergeNodes(id1, id2) {
+    var n1 = state.byId[id1], n2 = state.byId[id2];
+    if (!n1 || !n2) return;
+    var keep = (n1.degree || 0) >= (n2.degree || 0) ? n1 : n2;
+    var drop = keep === n1 ? n2 : n1;
+    pushUndo("merge " + drop.name + " into " + keep.name);
+    var seen = {};
+    state.links.forEach(function (l) {
+      if (l.a === keep.id && l.b === keep.id) return;
+      var otherEnd = l.a === keep.id ? l.b : l.b === keep.id ? l.a : null;
+      if (otherEnd) seen[otherEnd] = true;
+    });
+    var dropped = 0;
+    state.links = state.links.filter(function (l) {
+      if (l.a !== drop.id && l.b !== drop.id) return true;
+      var other = l.a === drop.id ? l.b : l.a;
+      if (other === keep.id || seen[other]) { dropped++; return false; }
+      seen[other] = true;
+      if (l.a === drop.id) l.a = keep.id; else l.b = keep.id;
+      if (!l.customName) l.name = pathName(state.byId[l.a], state.byId[l.b], l.id);
+      return true;
+    });
+    state.nodes = state.nodes.filter(function (n) { return n.id !== drop.id; });
+    delete state.byId[drop.id];
+    recount();
+    drawNodes();
+    drawLinks();
+    selectNodesOnly([keep.id]);
+    save();
+    msg("Merged " + drop.name + " into " + keep.name +
+      (dropped ? " (" + dropped + " duplicate link(s) dropped)" : "") + " \u2014 Ctrl+Z to undo.", "ok");
+  }
+
+  /* ---------------- box select ---------------- */
+
+  /* A mousedown that starts on empty map or on a path (nodes stop propagation of
+     their own mousedown while the Select tool is active) begins a rubber-band box;
+     anything with both endpoints (for a path) or itself (for a node) inside the
+     box becomes the new selection on mouseup. */
+  function beginBoxSelect(downEvt) {
+    if (state.tool !== "select") return;
+    if (downEvt.originalEvent && downEvt.originalEvent.button !== 0) return;
+    var startPoint = downEvt.containerPoint;
+    var startLatLng = downEvt.latlng;
+    var dragging = false;
+    var boxEl = null;
+    map.dragging.disable();
+
+    function onMove(e) {
+      if (!dragging) {
+        if (startPoint.distanceTo(e.containerPoint) < 4) return;
+        dragging = true;
+        boxEl = L.DomUtil.create("div", "select-box", map.getContainer());
+        $("map").classList.add("select-dragging");
+      }
+      var p2 = e.containerPoint;
+      var x = Math.min(startPoint.x, p2.x), y = Math.min(startPoint.y, p2.y);
+      boxEl.style.left = x + "px";
+      boxEl.style.top = y + "px";
+      boxEl.style.width = Math.abs(startPoint.x - p2.x) + "px";
+      boxEl.style.height = Math.abs(startPoint.y - p2.y) + "px";
+    }
+
+    function onUp(e) {
+      map.off("mousemove", onMove);
+      map.off("mouseup", onUp);
+      map.dragging.enable();
+      $("map").classList.remove("select-dragging");
+      if (!dragging) return;
+      if (boxEl && boxEl.parentNode) boxEl.parentNode.removeChild(boxEl);
+      suppressClick = true;
+      var bounds = L.latLngBounds(startLatLng, e.latlng);
+      var nodeIds = state.nodes
+        .filter(function (n) { return bounds.contains([n.lat, n.lon]); })
+        .map(function (n) { return n.id; });
+      var linkIds = state.links
+        .filter(function (l) {
+          var a = state.byId[l.a], b = state.byId[l.b];
+          return a && b && bounds.contains([a.lat, a.lon]) && bounds.contains([b.lat, b.lon]);
+        })
+        .map(function (l) { return l.id; });
+      state.selection = { nodes: nodeIds, links: linkIds };
+      refreshSelectionUI();
+    }
+
+    map.on("mousemove", onMove);
+    map.on("mouseup", onUp);
   }
 
   /* ---------------- name dialog ---------------- */
@@ -1803,21 +2279,24 @@ svg.leaflet-image-layer.leaflet-interactive path {
     list.innerHTML = "";
     state.nodes.forEach(function (n) {
       if (q && n.name.toLowerCase().indexOf(q) === -1) return;
+      var sel = isNodeSelected(n.id);
       var row = document.createElement("div");
-      row.className = "row" + (state.selected === n.id ? " sel" : "");
+      row.className = "row" + (sel ? " sel" : "");
       row.innerHTML =
-        '<span class="dot ' + (state.selected === n.id ? "a" : n.degree > 0 ? "used" : "") + '"></span>' +
+        '<span class="dot ' + (sel ? "a" : n.degree > 0 ? "used" : "") + '"></span>' +
         '<span class="nm">' + esc(n.name) + '<div class="sub">' +
         n.lat.toFixed(6) + ", " + n.lon.toFixed(6) + " \u00b7 " + (n.degree || 0) + " link(s)</div></span>" +
         '<span class="acts"><button data-act="zoom">zoom</button>' +
-        '<button data-act="rename">rename</button>' +
+        '<button data-act="edit">edit</button>' +
         '<button data-act="del" class="danger">del</button></span>';
       row.addEventListener("click", function (e) {
         var act = e.target.dataset.act;
         if (act === "zoom") { map.setView([n.lat, n.lon], Math.max(map.getZoom(), 17)); return; }
-        if (act === "rename") { renameNode(n.id); return; }
+        if (act === "edit") { editNode(n.id); return; }
         if (act === "del") { deleteNode(n.id); return; }
-        pickNode(n.id);
+        if (state.tool === "path") { pickNodeForPath(n.id); return; }
+        if (state.tool === "delete") { deleteNode(n.id); return; }
+        handleNodeClick(n.id, e);
       });
       list.appendChild(row);
     });
@@ -1832,17 +2311,19 @@ svg.leaflet-image-layer.leaflet-interactive path {
       if (q && l.name.toLowerCase().indexOf(q) === -1) return;
       var a = state.byId[l.a], b = state.byId[l.b];
       var row = document.createElement("div");
-      row.className = "row" + (state.activeLink === l.id ? " sel" : "");
+      row.className = "row" + (isLinkSelected(l.id) ? " sel" : "");
       row.innerHTML =
         '<span class="dot"></span>' +
         '<span class="nm">' + esc(l.name) + '<div class="sub">' +
         esc(a.name) + " \u2192 " + esc(b.name) + " \u00b7 " + fmtLen(linkLength(l)) + "</div></span>" +
-        '<span class="acts">' +
+        '<span class="acts"><button data-act="rename">rename</button>' +
         '<button data-act="del" class="danger">del</button></span>';
       row.addEventListener("click", function (e) {
         var act = e.target.dataset.act;
+        if (act === "rename") { renameLink(l.id); return; }
         if (act === "del") { deleteLink(l.id); return; }
-        setActiveLink(l.id);
+        if (state.tool === "delete") { deleteLink(l.id); return; }
+        handleLinkClick(l.id, e);
         map.fitBounds(L.latLngBounds([[a.lat, a.lon], [b.lat, b.lon]]).pad(0.4));
       });
       list.appendChild(row);
@@ -1853,17 +2334,21 @@ svg.leaflet-image-layer.leaflet-interactive path {
     $("btnClear").disabled = state.links.length === 0;
     $("btnDashboard").disabled = state.nodes.length === 0;
     $("btnFit").disabled = state.nodes.length === 0;
-    updateUndoButton();
+    updateHistoryButtons();
   }
 
   function updateStatus() {
     $("stFile").textContent = state.fileName || "\u2014";
-    $("stSel").textContent = state.selected ? state.byId[state.selected].name : "none";
+    var selCount = state.selection.nodes.length + state.selection.links.length;
+    if (selCount === 0) $("stSel").textContent = "none";
+    else if (selCount === 1 && state.selection.nodes.length === 1) $("stSel").textContent = state.byId[state.selection.nodes[0]].name;
+    else if (selCount === 1) $("stSel").textContent = (state.links.filter(function (l) { return l.id === state.selection.links[0]; })[0] || {}).name || "none";
+    else $("stSel").textContent = selCount + " selected";
     var total = state.links.reduce(function (s, l) { return s + linkLength(l); }, 0);
     $("stLen").textContent = fmtLen(total);
   }
 
-  function renderAll() { renderNodes(); renderLinks(); updateStatus(); refreshDashboardIfOpen(); }
+  function renderAll() { renderNodes(); renderLinks(); updateStatus(); updateMergeButton(); refreshDashboardIfOpen(); }
 
   function esc(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
@@ -2022,11 +2507,11 @@ svg.leaflet-image-layer.leaflet-interactive path {
     state.byId = {};
     nodes.forEach(function (n) { n.degree = 0; state.byId[n.id] = n; });
     state.links = [];
-    state.selected = null;
-    state.activeLink = null;
+    state.selection = { nodes: [], links: [] };
+    state.linkAnchor = null;
     state.seq = 1;
     state.nodeSeq = 1;
-    setAddMode(false);
+    setTool("select");
     state.fileName = fileName;
     (links || []).forEach(function (l) {
       var linkId = "l" + (state.seq++);
@@ -2208,15 +2693,16 @@ svg.leaflet-image-layer.leaflet-interactive path {
     fr.readAsArrayBuffer(file);
   }
 
-  /* ---------------- add / rename / delete nodes ---------------- */
+  /* ---------------- add / edit / delete nodes ---------------- */
 
   function addNode(latlng) {
+    var snapped = snapLatLng(latlng);
     var n = state.nodeSeq++;
     var id = "m" + n;
     while (state.byId[id]) { n = state.nodeSeq++; id = "m" + n; }
     var node = {
       id: id, name: applyNodeTemplate(getNodeTemplate(), n),
-      lat: latlng.lat, lon: latlng.lng, alt: 0, desc: "", degree: 0
+      lat: snapped.lat, lon: snapped.lng, alt: 0, desc: "", degree: 0
     };
     pushUndo("add node " + node.name);
     state.nodes.push(node);
@@ -2227,97 +2713,131 @@ svg.leaflet-image-layer.leaflet-interactive path {
     msg("Node added: " + node.name, "ok");
   }
 
-  function renameNode(id) {
+  var editNodeDlg = $("editNodeDlg"), editNodeId = null;
+
+  function editNode(id) {
     var node = state.byId[id];
     if (!node) return;
-    askName("Rename node", "Used to auto-generate path names for its connections.", node.name,
+    editNodeId = id;
+    $("editNodeName").value = node.name;
+    $("editNodeLat").value = node.lat;
+    $("editNodeLon").value = node.lon;
+    editNodeDlg.showModal();
+    setTimeout(function () { $("editNodeName").select(); }, 0);
+  }
+
+  function commitEditNode() {
+    var node = state.byId[editNodeId];
+    editNodeId = null;
+    if (!node) return;
+    var name = $("editNodeName").value.trim();
+    var lat = parseFloat($("editNodeLat").value);
+    var lon = parseFloat($("editNodeLon").value);
+    if (!name) { msg("Node name can't be empty.", "err"); return; }
+    if (!isFinite(lat) || lat < -90 || lat > 90) { msg("Latitude must be between -90 and 90.", "err"); return; }
+    if (!isFinite(lon) || lon < -180 || lon > 180) { msg("Longitude must be between -180 and 180.", "err"); return; }
+    pushUndo("edit " + node.name);
+    node.name = name;
+    node.lat = lat;
+    node.lon = lon;
+    state.links.forEach(function (l) {
+      if ((l.a === node.id || l.b === node.id) && !l.customName) {
+        l.name = pathName(state.byId[l.a], state.byId[l.b], l.id);
+      }
+    });
+    drawNodes();
+    drawLinks();
+    renderAll();
+    save();
+    editNodeDlg.close();
+    msg("Node updated.", "ok");
+  }
+
+  function renameLink(id) {
+    var link = state.links.filter(function (l) { return l.id === id; })[0];
+    if (!link) return;
+    askName("Rename path", "Overrides the auto-generated name; it will no longer follow node renames or naming-format changes.",
+      link.name,
       function (v) {
-        pushUndo("rename " + node.name);
-        node.name = v;
-        state.links.forEach(function (l) {
-          if (l.a === id || l.b === id) l.name = pathName(state.byId[l.a], state.byId[l.b], l.id);
-        });
-        drawNodes();
+        pushUndo("rename " + link.name);
+        link.name = v;
+        link.customName = true;
         drawLinks();
         renderAll();
         save();
-        msg("Node renamed.", "ok");
-      }, null, "Node name");
+        msg("Path renamed.", "ok");
+      }, null, "Path name");
   }
 
   function deleteNode(id) {
     var node = state.byId[id];
     if (!node) return;
     var linked = state.links.filter(function (l) { return l.a === id || l.b === id; });
-    var q = linked.length
-      ? 'Delete node "' + node.name + '" and its ' + linked.length + " connection(s)?"
-      : 'Delete node "' + node.name + '"?';
-    if (!confirm(q)) return;
     pushUndo("delete node " + node.name);
     var linkedIds = linked.map(function (l) { return l.id; });
     state.links = state.links.filter(function (l) { return l.a !== id && l.b !== id; });
     state.nodes = state.nodes.filter(function (n) { return n.id !== id; });
     delete state.byId[id];
-    if (state.selected === id) state.selected = null;
-    if (state.activeLink && linkedIds.indexOf(state.activeLink) >= 0) state.activeLink = null;
+    var idx = state.selection.nodes.indexOf(id);
+    if (idx >= 0) state.selection.nodes.splice(idx, 1);
+    state.selection.links = state.selection.links.filter(function (lid) { return linkedIds.indexOf(lid) === -1; });
+    if (state.linkAnchor === id) state.linkAnchor = null;
     recount();
     drawNodes();
     drawLinks();
     renderAll();
     save();
-    msg("Node removed.", "ok");
+    msg("Node removed" + (linked.length ? " with " + linked.length + " connection(s)" : "") + ".", "ok", "Undo", undo);
   }
 
-  function setAddMode(on) {
-    state.addMode = !!on;
-    if (state.addMode && state.pathMode) setPathMode(false);
-    if (state.addMode && state.moveMode) setMoveMode(false);
-    if (state.addMode) clearSelection();
-    /* Double-click zoom would fight with click-to-place, so it steps aside here. */
-    if (state.addMode) map.doubleClickZoom.disable(); else map.doubleClickZoom.enable();
-    $("btnAddNode").textContent = "Add node: " + (state.addMode ? "on" : "off");
-    $("btnAddNode").classList.toggle("on", state.addMode);
-    $("map").classList.toggle("adding", state.addMode);
-    updateHint();
-  }
-
-  function setPathMode(on) {
-    state.pathMode = !!on;
-    if (state.pathMode && state.addMode) setAddMode(false);
-    if (state.pathMode && state.moveMode) setMoveMode(false);
-    $("btnAddPath").textContent = "Add path: " + (state.pathMode ? "on" : "off");
-    $("btnAddPath").classList.toggle("on", state.pathMode);
-    $("map").classList.toggle("linking", state.pathMode);
-    clearSelection();
+  function setTool(tool) {
+    if (!TOOLS.some(function (t) { return t.id === tool; })) tool = "select";
+    state.tool = tool;
+    if (tool !== "path") state.linkAnchor = null;
+    /* Add node/Add path start from a clean slate, mirroring the previous toggle
+       behavior; Move/Delete/Split/Re-route/Select keep whatever was selected so a
+       selection made in Select can carry straight into a Move (group-drag) or
+       Delete. */
+    if (tool === "node" || tool === "path") clearSelection();
+    /* Double-click zoom would fight with click-to-place, so it steps aside for Add node. */
+    if (tool === "node") map.doubleClickZoom.disable(); else map.doubleClickZoom.enable();
+    document.querySelectorAll("#toolGroup button").forEach(function (btn) {
+      btn.classList.toggle("on", btn.dataset.tool === tool);
+    });
+    var mapEl = $("map");
+    ["adding", "linking", "moving", "deleting", "splitting", "rerouting"].forEach(function (c) {
+      mapEl.classList.remove(c);
+    });
+    var cls = { node: "adding", path: "linking", move: "moving", delete: "deleting", split: "splitting", reroute: "rerouting" }[tool];
+    if (cls) mapEl.classList.add(cls);
     drawLinks();
-    updateHint();
-  }
-
-  function setMoveMode(on) {
-    state.moveMode = !!on;
-    if (state.moveMode && state.addMode) setAddMode(false);
-    if (state.moveMode && state.pathMode) setPathMode(false);
-    $("btnMoveNode").textContent = "Move node: " + (state.moveMode ? "on" : "off");
-    $("btnMoveNode").classList.toggle("on", state.moveMode);
-    $("map").classList.toggle("moving", state.moveMode);
+    updateMergeButton();
     updateHint();
   }
 
   function updateHint() {
     var hint = $("hint");
     if (!hint) return;
-    if (state.addMode) {
-      hint.textContent = "Add node is on: click anywhere on the map to place a node. Press Esc to stop.";
-    } else if (state.pathMode) {
-      hint.textContent = "Add path is on: click a node, then a second node to connect them \u2014 keep clicking " +
-        "to chain a route. Existing paths are click-through while this is on, so crowded nodes stay easy to hit. " +
-        "Press Esc to stop.";
-    } else if (state.moveMode) {
-      hint.textContent = "Move node is on: drag a node to reposition it \u2014 connected paths follow in real " +
-        "time. Clicking without dragging still just selects it. Press Esc to stop.";
-    } else {
-      hint.textContent = "Turn on \"Add path\" to connect nodes. With it off, clicking a node just selects it " +
-        "and clicking a path highlights it. Delete removes the selection, Ctrl+Z undoes, F zooms to fit.";
+    switch (state.tool) {
+      case "node":
+        hint.textContent = "Add node is on: click anywhere on the map to place a node. Press Esc to stop."; break;
+      case "path":
+        hint.textContent = "Add path is on: click a node, then a second node to connect them \u2014 keep clicking " +
+          "to chain a route. Existing paths are click-through while this is on. Press Esc to stop."; break;
+      case "move":
+        hint.textContent = "Move is on: drag a node (or a multi-node selection) to reposition it \u2014 connected " +
+          "paths follow in real time. Press Esc to stop."; break;
+      case "delete":
+        hint.textContent = "Delete is on: click a node or path to remove it immediately \u2014 an Undo button " +
+          "appears if you didn't mean to. Press Esc to stop."; break;
+      case "split":
+        hint.textContent = "Split path is on: click a path to insert a new node at that point and split it in " +
+          "two. Press Esc to stop."; break;
+      case "reroute":
+        hint.textContent = "Re-route is on: drag a path's end onto a different node to rewire it. Press Esc to stop."; break;
+      default:
+        hint.textContent = "Click a node or path to select it \u2014 shift-click or drag a box to select several. " +
+          "Delete removes the selection, Ctrl+Z undoes, F zooms to fit.";
     }
   }
 
@@ -2339,7 +2859,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
           };
         }),
         links: state.links.map(function (l) {
-          return { id: l.id, name: l.name, a: l.a, b: l.b, style: l.style || null };
+          return { id: l.id, name: l.name, a: l.a, b: l.b, style: l.style || null, customName: !!l.customName };
         })
       }));
     } catch (e) { /* storage full or blocked - ignore */ }
@@ -2367,7 +2887,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
       state.byId = {};
       state.nodes.forEach(function (n) { state.byId[n.id] = n; });
       state.links = (s.links || []).filter(function (l) { return state.byId[l.a] && state.byId[l.b]; });
-      state.links.forEach(function (l) { l.name = pathName(state.byId[l.a], state.byId[l.b], l.id); });
+      state.links.forEach(function (l) {
+        l.customName = !!l.customName;
+        if (!l.customName) l.name = pathName(state.byId[l.a], state.byId[l.b], l.id);
+      });
       state.fileName = s.fileName || "";
       state.seq = s.seq || state.links.length + 1;
       state.nodeSeq = s.nodeSeq || 1;
@@ -2619,25 +3142,36 @@ svg.leaflet-image-layer.leaflet-interactive path {
   $("btnExportCsv").addEventListener("click", exportCsv);
   $("btnExportKml").addEventListener("click", exportKml);
   $("btnUndo").addEventListener("click", undo);
+  $("btnRedo").addEventListener("click", redo);
   $("btnClear").addEventListener("click", function () {
     if (!state.links.length) return;
-    if (!confirm("Delete all " + state.links.length + " connections?")) return;
+    var count = state.links.length;
     pushUndo("clear all connections");
     state.links = [];
-    state.activeLink = null;
+    state.selection.links = [];
     recount();
     drawLinks();
     refreshNodeStyles();
     renderAll();
     save();
-    msg("All connections cleared \u2014 Undo (Ctrl+Z) brings them back.", "ok");
+    msg("Cleared all " + count + " connections.", "ok", "Undo", undo);
   });
   $("btnFit").addEventListener("click", fitToData);
-  $("btnLabels").addEventListener("click", function () {
-    state.labels = !state.labels;
-    lsSet(LABELS_KEY, state.labels ? "1" : "0");
-    this.textContent = "Labels: " + (state.labels ? "on" : "off");
+  $("btnLabelsNodes").addEventListener("click", function () {
+    state.labelsNodes = !state.labelsNodes;
+    lsSet(LABELS_NODES_KEY, state.labelsNodes ? "1" : "0");
+    this.textContent = "Node labels: " + (state.labelsNodes ? "on" : "off");
     drawNodes();
+  });
+  $("nodeLabelFilter").addEventListener("input", function () {
+    state.nodeLabelFilter = this.value.trim();
+    lsSet(NODE_LABEL_FILTER_KEY, state.nodeLabelFilter);
+    drawNodes();
+  });
+  $("btnLabelsPaths").addEventListener("click", function () {
+    state.labelsPaths = !state.labelsPaths;
+    lsSet(LABELS_PATHS_KEY, state.labelsPaths ? "1" : "0");
+    this.textContent = "Path labels: " + (state.labelsPaths ? "on" : "off");
     drawLinks();
   });
   $("btnFileStyles").addEventListener("click", function () {
@@ -2650,26 +3184,29 @@ svg.leaflet-image-layer.leaflet-interactive path {
       ? "Showing the colors, sizes and widths from the loaded file."
       : "Showing the app palette (blue/green by connection status).", "ok");
   });
+  $("btnSnap").addEventListener("click", function () {
+    state.snap = !state.snap;
+    lsSet(SNAP_KEY, state.snap ? "1" : "0");
+    this.textContent = "Snap: " + (state.snap ? "on" : "off");
+  });
+  $("btnMerge").addEventListener("click", mergeSelectedNodes);
   $("nodeSearch").addEventListener("input", renderNodes);
   $("linkSearch").addEventListener("input", renderLinks);
 
-  $("btnAddNode").addEventListener("click", function () {
-    if (!state.nodes.length && !state.addMode) { msg("Load a KML or KMZ first.", "err"); return; }
-    setAddMode(!state.addMode);
-    if (state.addMode) msg("Add node: click anywhere on the map to place a node. Press Esc to stop.");
+  document.querySelectorAll("#toolGroup button").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var tool = btn.dataset.tool;
+      if (!state.nodes.length && tool !== "select") { msg("Load a KML or KMZ first.", "err"); return; }
+      setTool(tool);
+      if (tool !== "select") msg(TOOLS.filter(function (t) { return t.id === tool; })[0].label + ": " +
+        { node: "click anywhere on the map to place a node.", path: "click a node, then a second node to connect them.",
+          move: "drag a node to reposition it.", delete: "click a node or path to remove it.",
+          split: "click a path to insert a new node there.", reroute: "drag a path's end onto a different node."
+        }[tool] + " Press Esc to stop.");
+    });
   });
 
-  $("btnAddPath").addEventListener("click", function () {
-    if (!state.nodes.length && !state.pathMode) { msg("Load a KML or KMZ first.", "err"); return; }
-    setPathMode(!state.pathMode);
-    if (state.pathMode) msg("Add path: click a node, then a second node to connect them. Press Esc to stop.");
-  });
-
-  $("btnMoveNode").addEventListener("click", function () {
-    if (!state.nodes.length && !state.moveMode) { msg("Load a KML or KMZ first.", "err"); return; }
-    setMoveMode(!state.moveMode);
-    if (state.moveMode) msg("Move node: drag a node to reposition it. Press Esc to stop.");
-  });
+  map.on("mousedown", beginBoxSelect);
 
   var namingDlg = $("namingDlg");
   $("btnNaming").addEventListener("click", function () {
@@ -2687,7 +3224,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
     var pathTmpl = $("pathTemplateInput").value.trim() || DEFAULT_PATH_TEMPLATE;
     setNodeTemplate(nodeTmpl);
     setPathTemplate(pathTmpl);
-    state.links.forEach(function (l) { l.name = pathName(state.byId[l.a], state.byId[l.b], l.id); });
+    state.links.forEach(function (l) {
+      if (!l.customName) l.name = pathName(state.byId[l.a], state.byId[l.b], l.id);
+    });
     drawLinks();
     renderAll();
     save();
@@ -2695,49 +3234,59 @@ svg.leaflet-image-layer.leaflet-interactive path {
     msg("Naming format updated.", "ok");
   });
 
+  $("editNodeOk").addEventListener("click", commitEditNode);
+  $("editNodeCancel").addEventListener("click", function () { editNodeId = null; editNodeDlg.close(); });
+  ["editNodeName", "editNodeLat", "editNodeLon"].forEach(function (id) {
+    $(id).addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); commitEditNode(); }
+    });
+  });
+
   /* Leaflet fires "click" twice for a double-click, which used to drop two stacked
      nodes; ignore the second one and keep dblclick-zoom out of the way while placing. */
   var lastAddClick = 0;
 
   map.on("click", function (e) {
-    if (suppressNodeClick) { suppressNodeClick = false; return; }
-    if (state.addMode) {
+    if (suppressClick) { suppressClick = false; return; }
+    if (state.tool === "node") {
       var now = Date.now();
       if (now - lastAddClick < 350) return;
       lastAddClick = now;
       addNode(e.latlng);
       return;
     }
-    if (state.selected) {
-      state.selected = null;
-      refreshNodeStyles();
-      renderNodes();
-      updateStatus();
-    }
-    if (state.activeLink) { state.activeLink = null; drawLinks(); renderLinks(); }
+    if (state.tool === "select") clearSelection();
   });
 
   document.addEventListener("keydown", function (e) {
-    if (dlg.open || namingDlg.open || $("dashDlg").open) return;
+    if (dlg.open || namingDlg.open || editNodeDlg.open || $("dashDlg").open) return;
     /* Never hijack typing in the filter boxes - Delete and Ctrl+Z belong to the input. */
     var t = e.target;
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
 
-    if (e.key === "Escape" && state.addMode) { setAddMode(false); }
-    if (e.key === "Escape" && state.pathMode) { setPathMode(false); }
-    if (e.key === "Escape" && state.moveMode) { setMoveMode(false); }
-    if (e.key === "Escape" && state.selected) {
-      state.selected = null; refreshNodeStyles(); renderNodes(); updateStatus();
+    if (e.key === "Escape") {
+      if (state.tool !== "select") { setTool("select"); }
+      else { clearSelection(); }
+      return;
     }
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "z") {
       e.preventDefault(); undo(); return;
     }
+    if (((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "z") ||
+      ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y")) {
+      e.preventDefault(); redo(); return;
+    }
     if (e.key === "Delete" || e.key === "Backspace") {
-      if (state.activeLink) { e.preventDefault(); deleteLink(state.activeLink); msg("Path deleted \u2014 Ctrl+Z to undo.", "ok"); return; }
-      if (state.selected) { e.preventDefault(); deleteNode(state.selected); return; }
+      if (state.selection.nodes.length || state.selection.links.length) {
+        e.preventDefault(); deleteSelection(); return;
+      }
     }
     if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "f") {
-      e.preventDefault(); fitToData();
+      e.preventDefault(); fitToData(); return;
+    }
+    if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+      var tool = KEY_TO_TOOL[e.key.toLowerCase()];
+      if (tool && (tool === "select" || state.nodes.length)) { e.preventDefault(); setTool(tool); }
     }
   });
 
@@ -2764,12 +3313,18 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   setBasemap(lsGet(BASEMAP_KEY) || "esristreet", false);
   state.fileStyles = lsGet(FILE_STYLES_KEY) !== "0";
-  state.labels = lsGet(LABELS_KEY) !== "0";
-  $("btnLabels").textContent = "Labels: " + (state.labels ? "on" : "off");
+  state.labelsNodes = lsGet(LABELS_NODES_KEY) !== "0";
+  state.labelsPaths = lsGet(LABELS_PATHS_KEY) !== "0";
+  state.nodeLabelFilter = lsGet(NODE_LABEL_FILTER_KEY) || "";
+  state.snap = lsGet(SNAP_KEY) !== "0";
+  $("btnLabelsNodes").textContent = "Node labels: " + (state.labelsNodes ? "on" : "off");
+  $("btnLabelsPaths").textContent = "Path labels: " + (state.labelsPaths ? "on" : "off");
+  $("nodeLabelFilter").value = state.nodeLabelFilter;
+  $("btnSnap").textContent = "Snap: " + (state.snap ? "on" : "off");
   restore();
   clearUndo();
   renderAll();
-  updateHint();
+  setTool("select");
   applyFileStyleAvailability();
   checkAllBasemaps();
 })();
