@@ -44,6 +44,32 @@ opens a dialog with numeric latitude/longitude fields (validated to real-world r
 plus its name; **rename** on a path overrides its auto-generated name — that override is
 remembered even if you later change the naming template or rename an endpoint node.
 
+### Bulk style
+
+**Bulk style…** applies a color, opacity, icon scale (nodes) or line width (paths) to
+many nodes or paths at once, instead of editing them one by one. Pick what to target —
+**Nodes** or **Paths** — then **which ones**:
+
+- **All** — every node/path.
+- **Current selection** — whatever is currently selected on the map or in the sidebar.
+- **Name match** — Contains / Starts with / Ends with / Regex, plus a **"doesn't match"**
+  checkbox that inverts whichever mode is chosen. This is the way to target names by what
+  they *lack*: e.g. most numbered nodes have no `p` in their name while `p-###` points do,
+  so "Contains `p`" + **doesn't match** selects every plain numbered node. A broken regex
+  never silently matches everything — it shows an error and disables Apply instead.
+- **Connection state** (nodes only) — Unconnected (0 paths), Dead ends (1 path), or
+  Hubs (3+ paths).
+
+The dialog shows a live match count and a plain-English description of the query (so an
+inverted query can't be misread), and highlights every matching node/path on the map as
+you adjust the query. Check only the properties you want to change — unchecked ones are
+left alone, so recoloring a set of nodes doesn't reset their icon scale, for example.
+**Reset to file style** clears your bulk edits from the matched items, restoring whatever
+the loaded file originally specified. Bulk styles are separate from the file's own
+`<Style>` styling: turning **File styles** off only hides the file's original look, your
+bulk edits stay visible; they're also included when exporting KML, and are undoable
+(Ctrl+Z) like any other edit.
+
 ## Features
 
 - Parses every `<Point>` placemark in the KML (folders and `MultiGeometry` included), using name + coordinates.

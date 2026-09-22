@@ -715,6 +715,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   #map.select-dragging, #map.select-dragging * { cursor: crosshair !important; }
   .node-icon.sel { filter: drop-shadow(0 0 3px #ff9f43) drop-shadow(0 0 6px #ff9f43); }
   .node-icon.danger-hover { filter: drop-shadow(0 0 4px #ff5b5b) drop-shadow(0 0 8px #ff5b5b); }
+  .node-icon.bulk-preview { filter: drop-shadow(0 0 4px #ffe14d) drop-shadow(0 0 8px #ffe14d); }
   .select-box {
     position: absolute; border: 1px dashed var(--accent);
     background: rgba(63, 167, 255, .15); pointer-events: none; z-index: 500;
@@ -829,6 +830,23 @@ svg.leaflet-image-layer.leaflet-interactive path {
   .dash-chart-canvas { position: relative; height: 220px; }
   .dash-chart-wide { grid-column: 1 / -1; }
   .dash-empty { color: var(--muted); padding: 20px 4px; }
+  .bulk-style-dlg { width: min(480px, 92vw); }
+  .bulk-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  .bulk-row select { flex: none; width: auto; }
+  .bulk-row input[type=text] { flex: 1; }
+  .bulk-check { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text); white-space: nowrap; }
+  .bulk-echo { color: var(--muted); font-size: 12px; margin-top: 8px; font-style: italic; }
+  .bulk-match-count { font-size: 13px; font-weight: 600; margin-top: 2px; }
+  .bulk-match-count.err { color: var(--danger); font-weight: 400; font-style: normal; }
+  .bulk-style-props {
+    display: grid; grid-template-columns: auto 1fr; gap: 8px 10px; align-items: center;
+    margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);
+  }
+  .bulk-style-props input[type=color] {
+    width: 100%; height: 26px; padding: 0; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--panel-2);
+  }
+  .bulk-style-props input[type=range], .bulk-style-props input[type=number] { width: 100%; }
 </style>
 </head>
 <body>
@@ -858,6 +876,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   </div>
   <button id="btnMerge" title="Merge the two selected nodes into one, keeping the more-connected one" disabled>Merge nodes</button>
   <button id="btnNaming" title="Set the auto-naming format for nodes and paths">Naming&hellip;</button>
+  <button id="btnBulkStyle" title="Apply a color, opacity, scale or width to many nodes or paths at once" disabled>Bulk style&hellip;</button>
   <span class="spacer"></span>
   <div class="popover-wrap">
     <button id="btnDisplayMenu" class="popover-trigger" type="button">Display &#9662;</button>
@@ -973,6 +992,74 @@ svg.leaflet-image-layer.leaflet-interactive path {
       <h4>Top connected nodes</h4>
       <div class="dash-chart-canvas"><canvas id="chartTopNodes"></canvas></div>
     </div>
+  </div>
+</dialog>
+
+<dialog id="bulkStyleDlg" class="bulk-style-dlg">
+  <div class="dash-head">
+    <h3>Bulk style</h3>
+    <button id="bulkStyleClose">Close</button>
+  </div>
+  <div class="sub" style="color:var(--muted);font-size:12px">
+    Pick a set of nodes or paths by name, selection or connection state, then apply a color,
+    opacity, scale or width to all of them at once.
+  </div>
+
+  <label class="lbl" for="bulkKind">Apply to</label>
+  <select id="bulkKind">
+    <option value="node">Nodes</option>
+    <option value="link">Paths</option>
+  </select>
+
+  <label class="lbl" for="bulkMode">Which ones</label>
+  <select id="bulkMode">
+    <option value="all">All</option>
+    <option value="selection">Current selection</option>
+    <option value="name">Name match</option>
+    <option id="bulkConnectionOption" value="connection">Connection state (nodes only)</option>
+  </select>
+
+  <div id="bulkNameOpts" class="bulk-row" hidden>
+    <select id="bulkNameMode">
+      <option value="contains">Contains</option>
+      <option value="starts">Starts with</option>
+      <option value="ends">Ends with</option>
+      <option value="regex">Regex</option>
+    </select>
+    <input id="bulkNameText" type="text" autocomplete="off" placeholder="text to match"
+      title="With Regex, ^\d+$ selects names that are purely numeric." />
+    <label class="bulk-check"><input id="bulkInvert" type="checkbox" /> doesn&rsquo;t match</label>
+  </div>
+
+  <div id="bulkConnectionOpts" class="bulk-row" hidden>
+    <select id="bulkConnectionMode">
+      <option value="unconnected">Unconnected (0 paths)</option>
+      <option value="deadend">Dead ends (1 path)</option>
+      <option value="hub">Hubs (3+ paths)</option>
+    </select>
+  </div>
+
+  <div id="bulkQueryEcho" class="bulk-echo"></div>
+  <div id="bulkMatchCount" class="bulk-match-count"></div>
+
+  <div class="bulk-style-props">
+    <label class="bulk-check"><input id="bulkApplyColor" type="checkbox" checked /> Color</label>
+    <input id="bulkColor" type="color" value="#3fa7ff" />
+
+    <label class="bulk-check"><input id="bulkApplyOpacity" type="checkbox" /> Opacity</label>
+    <input id="bulkOpacity" type="range" min="0.1" max="1" step="0.05" value="1" />
+
+    <label class="bulk-check" id="bulkScaleRow"><input id="bulkApplyScale" type="checkbox" /> Icon scale</label>
+    <input id="bulkScale" type="number" min="0.3" max="4" step="0.1" value="1" />
+
+    <label class="bulk-check" id="bulkWidthRow" hidden><input id="bulkApplyWidth" type="checkbox" /> Width</label>
+    <input id="bulkWidth" type="number" min="1" max="12" step="1" value="3" hidden />
+  </div>
+
+  <div class="btns">
+    <button id="bulkStyleReset" class="danger">Reset to file style</button>
+    <button id="bulkStyleCancel">Cancel</button>
+    <button id="bulkStyleApply" class="primary">Apply</button>
   </div>
 </dialog>
 
@@ -1461,6 +1548,19 @@ svg.leaflet-image-layer.leaflet-interactive path {
     return (out.color || out.width) ? out : null;
   }
 
+  /* Property-by-property override: any key set (non-null) on `override` wins,
+     everything else falls through to `base`. Used to layer a bulk-applied
+     userStyle on top of (or instead of) a file style without discarding the
+     properties the user didn't touch. */
+  function mergeStyle(base, override) {
+    if (!override) return base;
+    if (!base) return override;
+    var out = {};
+    Object.keys(base).forEach(function (k) { out[k] = base[k]; });
+    Object.keys(override).forEach(function (k) { if (override[k] != null) out[k] = override[k]; });
+    return out;
+  }
+
   function parseKml(text, assets) {
     text = String(text).replace(/^[\uFEFF\s]+/, "");
     var doc = new DOMParser().parseFromString(text, "application/xml");
@@ -1557,7 +1657,17 @@ svg.leaflet-image-layer.leaflet-interactive path {
     });
   }
 
-  function styleOf(node) { return state.fileStyles ? node.style : null; }
+  /* File style is gated by the "File styles" toggle; a bulk-applied userStyle
+     is a deliberate user action and stays visible regardless of that toggle. */
+  function styleOf(node) {
+    var file = state.fileStyles ? node.style : null;
+    return node.userStyle ? mergeStyle(file, node.userStyle) : file;
+  }
+
+  function linkStyleOf(l) {
+    var file = state.fileStyles ? l.style : null;
+    return l.userStyle ? mergeStyle(file, l.userStyle) : file;
+  }
 
   function nodeIconUrl(node) {
     var st = styleOf(node);
@@ -1818,7 +1928,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   }
 
   function linkStyle(l) {
-    var st = state.fileStyles ? l.style : null;
+    var st = linkStyleOf(l);
     var active = isLinkSelected(l.id);
     return {
       color: active ? "#ff9f43" : (st && st.color) ? st.color : "#3fa7ff",
@@ -1997,10 +2107,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
   function snapshot() {
     return {
       nodes: state.nodes.map(function (n) {
-        return { id: n.id, name: n.name, lat: n.lat, lon: n.lon, alt: n.alt, desc: n.desc, style: n.style || null };
+        return { id: n.id, name: n.name, lat: n.lat, lon: n.lon, alt: n.alt, desc: n.desc, style: n.style || null, userStyle: n.userStyle || null };
       }),
       links: state.links.map(function (l) {
-        return { id: l.id, name: l.name, a: l.a, b: l.b, style: l.style || null, customName: !!l.customName };
+        return { id: l.id, name: l.name, a: l.a, b: l.b, style: l.style || null, userStyle: l.userStyle || null, customName: !!l.customName };
       }),
       seq: state.seq,
       nodeSeq: state.nodeSeq,
@@ -2038,12 +2148,12 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   function applySnapshot(s) {
     state.nodes = s.nodes.map(function (n) {
-      return { id: n.id, name: n.name, lat: n.lat, lon: n.lon, alt: n.alt, desc: n.desc, style: n.style, degree: 0 };
+      return { id: n.id, name: n.name, lat: n.lat, lon: n.lon, alt: n.alt, desc: n.desc, style: n.style, userStyle: n.userStyle || null, degree: 0 };
     });
     state.byId = {};
     state.nodes.forEach(function (n) { state.byId[n.id] = n; });
     state.links = s.links.map(function (l) {
-      return { id: l.id, name: l.name, a: l.a, b: l.b, style: l.style, customName: !!l.customName };
+      return { id: l.id, name: l.name, a: l.a, b: l.b, style: l.style, userStyle: l.userStyle || null, customName: !!l.customName };
     });
     state.seq = s.seq;
     state.nodeSeq = s.nodeSeq;
@@ -2390,6 +2500,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     $("btnExportKml").disabled = state.nodes.length === 0;
     $("btnClear").disabled = state.links.length === 0;
     $("btnDashboard").disabled = state.nodes.length === 0;
+    $("btnBulkStyle").disabled = state.nodes.length === 0;
     $("btnFit").disabled = state.nodes.length === 0;
     updateHistoryButtons();
   }
@@ -2412,6 +2523,265 @@ svg.leaflet-image-layer.leaflet-interactive path {
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
     });
   }
+
+  /* ---------------- bulk style ---------------- */
+
+  /* Builds a name-testing function for one of the four matching modes, with an
+     optional final negation ("doesn't match"). Returns { test, error } instead
+     of throwing so an invalid regex can be surfaced inline in the dialog; when
+     there's an error, `test` is null and callers must treat the match set as
+     empty rather than guessing. */
+  function buildNameMatcher(nameMode, text, invert) {
+    var raw = text || "";
+    var lower = raw.toLowerCase();
+    var testFn;
+    if (nameMode === "regex") {
+      var re;
+      try { re = new RegExp(raw, "i"); } catch (e) { return { test: null, error: e.message || "Invalid regular expression" }; }
+      testFn = function (name) { return re.test(name || ""); };
+    } else if (nameMode === "starts") {
+      testFn = function (name) { return (name || "").toLowerCase().indexOf(lower) === 0; };
+    } else if (nameMode === "ends") {
+      testFn = lower === "" ? function () { return true; } : function (name) {
+        var n = (name || "").toLowerCase();
+        return n.length >= lower.length && n.slice(n.length - lower.length) === lower;
+      };
+    } else { // contains
+      testFn = function (name) { return (name || "").toLowerCase().indexOf(lower) !== -1; };
+    }
+    if (invert) { var inner = testFn; testFn = function (name) { return !inner(name); }; }
+    return { test: testFn, error: null };
+  }
+
+  /* Single entry point for every "which ones" mode in the Bulk style dialog.
+     `kind` is "node" or "link"; `mode` is "all" | "selection" | "name" | "connection".
+     Always returns { items, error } - on a bad regex, items is [] and error is
+     set, so a typo can never silently expand (or invert) into "everything". */
+  function matchTargets(kind, mode, opts) {
+    opts = opts || {};
+    var pool = kind === "link" ? state.links : state.nodes;
+    if (mode === "all") return { items: pool.slice(), error: null };
+    if (mode === "selection") {
+      var selIds = kind === "link" ? state.selection.links : state.selection.nodes;
+      var idSet = {};
+      selIds.forEach(function (id) { idSet[id] = true; });
+      return { items: pool.filter(function (x) { return idSet[x.id]; }), error: null };
+    }
+    if (mode === "connection" && kind === "node") {
+      var test;
+      if (opts.connectionMode === "deadend") test = function (n) { return (n.degree || 0) === 1; };
+      else if (opts.connectionMode === "hub") test = function (n) { return (n.degree || 0) >= 3; };
+      else test = function (n) { return !n.degree; }; // unconnected (default)
+      return { items: pool.filter(test), error: null };
+    }
+    if (mode === "name") {
+      var matcher = buildNameMatcher(opts.nameMode, opts.text, opts.invert);
+      if (matcher.error) return { items: [], error: matcher.error };
+      return { items: pool.filter(function (x) { return matcher.test(x.name); }), error: null };
+    }
+    return { items: [], error: null };
+  }
+
+  function describeBulkQuery(kind, mode, opts) {
+    var subj = kind === "link" ? "Paths" : "Nodes";
+    if (mode === "all") return "All " + subj.toLowerCase() + ".";
+    if (mode === "selection") return "The currently selected " + subj.toLowerCase() + ".";
+    if (mode === "connection") {
+      if (opts.connectionMode === "deadend") return subj + " with exactly 1 connection (dead ends).";
+      if (opts.connectionMode === "hub") return subj + " with 3 or more connections (hubs).";
+      return subj + " with no connections (unconnected).";
+    }
+    if (mode === "name") {
+      var verbs = opts.invert
+        ? { contains: "contain", starts: "start with", ends: "end with", regex: "match the regex" }
+        : { contains: "contains", starts: "starts with", ends: "ends with", regex: "matches the regex" };
+      var verb = verbs[opts.nameMode] || verbs.contains;
+      var neg = opts.invert ? "does not " : "";
+      return subj + " whose name " + neg + verb + " \u201c" + (opts.text || "") + "\u201d.";
+    }
+    return "";
+  }
+
+  /* Temporary map highlight so the user can see what a query will affect before
+     committing to Apply. Uses setStyle for vector layers (circle markers, polylines)
+     and a CSS filter class for icon markers, which aren't restylable that way. */
+  var bulkPreviewKind = null;
+  var bulkPreviewIds = [];
+
+  function clearBulkPreview() {
+    if (bulkPreviewKind === "node") {
+      bulkPreviewIds.forEach(function (id) {
+        var n = state.byId[id];
+        if (!n || !n.marker) return;
+        if (n.marker.setStyle) n.marker.setStyle(nodeStyle(n));
+        var el = n.marker.getElement && n.marker.getElement();
+        if (el) el.classList.remove("bulk-preview");
+      });
+    } else if (bulkPreviewKind === "link") {
+      bulkPreviewIds.forEach(function (id) {
+        var l = state.links.filter(function (x) { return x.id === id; })[0];
+        if (l && l.line) l.line.setStyle(linkStyle(l));
+      });
+    }
+    bulkPreviewKind = null;
+    bulkPreviewIds = [];
+  }
+
+  function applyBulkPreview(kind, items) {
+    clearBulkPreview();
+    bulkPreviewKind = kind;
+    bulkPreviewIds = items.map(function (x) { return x.id; });
+    if (kind === "node") {
+      items.forEach(function (n) {
+        if (!n.marker) return;
+        if (n.marker.setStyle) n.marker.setStyle({ color: "#ffe14d", fillColor: "#ffe14d", weight: 3 });
+        var el = n.marker.getElement && n.marker.getElement();
+        if (el) el.classList.add("bulk-preview");
+      });
+    } else {
+      items.forEach(function (l) {
+        if (l.line) l.line.setStyle({ color: "#ffe14d", weight: linkStyle(l).weight + 2 });
+      });
+    }
+  }
+
+  function currentBulkQuery() {
+    return {
+      kind: $("bulkKind").value,
+      mode: $("bulkMode").value,
+      opts: {
+        nameMode: $("bulkNameMode").value,
+        text: $("bulkNameText").value,
+        invert: $("bulkInvert").checked,
+        connectionMode: $("bulkConnectionMode").value
+      }
+    };
+  }
+
+  function bulkPropertiesChecked(kind) {
+    if (kind === "link") return $("bulkApplyColor").checked || $("bulkApplyOpacity").checked || $("bulkApplyWidth").checked;
+    return $("bulkApplyColor").checked || $("bulkApplyOpacity").checked || $("bulkApplyScale").checked;
+  }
+
+  function refreshBulkDialog() {
+    var q = currentBulkQuery();
+    var isLink = q.kind === "link";
+    var connOption = $("bulkConnectionOption");
+    if (connOption) connOption.disabled = isLink;
+    if (isLink && q.mode === "connection") { $("bulkMode").value = "all"; q.mode = "all"; }
+    $("bulkNameOpts").hidden = q.mode !== "name";
+    $("bulkConnectionOpts").hidden = q.mode !== "connection";
+    $("bulkScaleRow").hidden = isLink;
+    $("bulkScale").hidden = isLink;
+    $("bulkWidthRow").hidden = !isLink;
+    $("bulkWidth").hidden = !isLink;
+
+    var res = matchTargets(q.kind, q.mode, q.opts);
+    var countEl = $("bulkMatchCount");
+    $("bulkQueryEcho").textContent = describeBulkQuery(q.kind, q.mode, q.opts);
+    var total = isLink ? state.links.length : state.nodes.length;
+    var kindWord = isLink ? "path" : "node";
+    if (res.error) {
+      countEl.textContent = res.error;
+      countEl.classList.add("err");
+      clearBulkPreview();
+    } else {
+      countEl.classList.remove("err");
+      countEl.textContent = res.items.length + " of " + total + " " + kindWord +
+        (res.items.length === 1 ? " matches" : "s match");
+      applyBulkPreview(q.kind, res.items);
+    }
+    var disableApply = !!res.error || res.items.length === 0 || !bulkPropertiesChecked(q.kind);
+    $("bulkStyleApply").disabled = disableApply;
+    $("bulkStyleReset").disabled = !!res.error || res.items.length === 0;
+    return { query: q, result: res };
+  }
+
+  function openBulkStyleDlg() {
+    var kind = "node", mode = "all";
+    if (state.selection.nodes.length) { kind = "node"; mode = "selection"; }
+    else if (state.selection.links.length) { kind = "link"; mode = "selection"; }
+    $("bulkKind").value = kind;
+    $("bulkMode").value = mode;
+    $("bulkNameMode").value = "contains";
+    $("bulkNameText").value = "";
+    $("bulkInvert").checked = false;
+    $("bulkConnectionMode").value = "unconnected";
+    $("bulkApplyColor").checked = true;
+    $("bulkColor").value = "#3fa7ff";
+    $("bulkApplyOpacity").checked = false;
+    $("bulkOpacity").value = "1";
+    $("bulkApplyScale").checked = false;
+    $("bulkScale").value = "1";
+    $("bulkApplyWidth").checked = false;
+    $("bulkWidth").value = "3";
+    refreshBulkDialog();
+    $("bulkStyleDlg").showModal();
+  }
+
+  function closeBulkStyleDlg() {
+    clearBulkPreview();
+    $("bulkStyleDlg").close();
+  }
+
+  $("btnBulkStyle").addEventListener("click", openBulkStyleDlg);
+  $("bulkStyleClose").addEventListener("click", closeBulkStyleDlg);
+  $("bulkStyleCancel").addEventListener("click", closeBulkStyleDlg);
+  $("bulkStyleDlg").addEventListener("close", clearBulkPreview);
+
+  [
+    "bulkKind", "bulkMode", "bulkNameMode", "bulkNameText", "bulkInvert", "bulkConnectionMode",
+    "bulkApplyColor", "bulkApplyOpacity", "bulkApplyScale", "bulkApplyWidth"
+  ].forEach(function (id) {
+    var el = $(id);
+    el.addEventListener("input", refreshBulkDialog);
+    el.addEventListener("change", refreshBulkDialog);
+  });
+
+  function bulkStylePatch(isLink) {
+    var patch = {};
+    if ($("bulkApplyColor").checked) patch.color = $("bulkColor").value;
+    if ($("bulkApplyOpacity").checked) patch.opacity = parseFloat($("bulkOpacity").value);
+    if (!isLink && $("bulkApplyScale").checked) patch.scale = parseFloat($("bulkScale").value);
+    if (isLink && $("bulkApplyWidth").checked) patch.width = parseFloat($("bulkWidth").value);
+    return patch;
+  }
+
+  $("bulkStyleApply").addEventListener("click", function () {
+    var res = refreshBulkDialog();
+    if (res.result.error || !res.result.items.length) return;
+    var isLink = res.query.kind === "link";
+    var patch = bulkStylePatch(isLink);
+    if (!Object.keys(patch).length) return;
+    pushUndo("Bulk style");
+    res.result.items.forEach(function (item) {
+      item.userStyle = Object.assign({}, item.userStyle || {}, patch);
+    });
+    clearBulkPreview();
+    drawNodes();
+    drawLinks();
+    renderAll();
+    save();
+    var n = res.result.items.length;
+    msg("Bulk style applied to " + n + " " + (isLink ? "path" : "node") + (n === 1 ? "" : "s") + ".", "ok");
+    $("bulkStyleDlg").close();
+  });
+
+  $("bulkStyleReset").addEventListener("click", function () {
+    var res = refreshBulkDialog();
+    if (res.result.error || !res.result.items.length) return;
+    var isLink = res.query.kind === "link";
+    pushUndo("Reset bulk style");
+    res.result.items.forEach(function (item) { item.userStyle = null; });
+    clearBulkPreview();
+    drawNodes();
+    drawLinks();
+    renderAll();
+    save();
+    var n = res.result.items.length;
+    msg("Reset " + n + " " + (isLink ? "path" : "node") + (n === 1 ? "" : "s") + " to file style.", "ok");
+    $("bulkStyleDlg").close();
+  });
 
   /* ---------------- dashboard ---------------- */
 
@@ -2980,11 +3350,11 @@ svg.leaflet-image-layer.leaflet-interactive path {
         nodes: state.nodes.map(function (n) {
           return {
             id: n.id, name: n.name, lat: n.lat, lon: n.lon, alt: n.alt, desc: n.desc,
-            style: persistableNodeStyle(n.style)
+            style: persistableNodeStyle(n.style), userStyle: persistableNodeStyle(n.userStyle)
           };
         }),
         links: state.links.map(function (l) {
-          return { id: l.id, name: l.name, a: l.a, b: l.b, style: l.style || null, customName: !!l.customName };
+          return { id: l.id, name: l.name, a: l.a, b: l.b, style: l.style || null, userStyle: l.userStyle || null, customName: !!l.customName };
         })
       }));
     } catch (e) { /* storage full or blocked - ignore */ }
@@ -3202,8 +3572,8 @@ svg.leaflet-image-layer.leaflet-interactive path {
   function exportKml() {
     var out = [];
     var reg = styleRegistry();
-    var nodeRefs = state.nodes.map(function (n) { return reg.node(n.style); });
-    var linkRefs = state.links.map(function (l) { return reg.link(l.style); });
+    var nodeRefs = state.nodes.map(function (n) { return reg.node(mergeStyle(n.style, n.userStyle)); });
+    var linkRefs = state.links.map(function (l) { return reg.link(mergeStyle(l.style, l.userStyle)); });
 
     out.push('<?xml version="1.0" encoding="UTF-8"?>');
     out.push('<kml xmlns="http://www.opengis.net/kml/2.2"><Document>');
