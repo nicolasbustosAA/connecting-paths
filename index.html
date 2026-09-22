@@ -794,6 +794,12 @@ svg.leaflet-image-layer.leaflet-interactive path {
   dialog::backdrop { background: rgba(0,0,0,.55); }
   dialog h3 { margin: 0 0 10px; font-size: 14px; }
   dialog .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  #dlgExtra:empty { display: none; }
+  #dlgExtra { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  #dlgExtra ol { margin: 0; padding-left: 18px; }
+  #dlgExtra li + li { margin-top: 3px; }
+  #dlgExtra a { color: var(--accent); }
+  #dlgExtra code { background: rgba(255,255,255,.08); border-radius: 3px; padding: 0 4px; }
   label.lbl { display: block; color: var(--muted); font-size: 11px; margin: 8px 0 3px; text-transform: uppercase; letter-spacing: .6px; }
   .dash-dlg { width: min(1000px, 92vw); max-height: 88vh; overflow: auto; }
   .dash-head { display: flex; align-items: center; justify-content: space-between; }
@@ -901,6 +907,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
 <dialog id="dlg">
   <h3 id="dlgTitle">Enter a value</h3>
   <div id="dlgInfo" class="sub" style="color:var(--muted);font-size:12px"></div>
+  <div id="dlgExtra" class="sub"></div>
   <label class="lbl" id="dlgLabel" for="dlgName">Value</label>
   <input id="dlgName" type="text" autocomplete="off" />
   <div class="btns">
@@ -1198,11 +1205,17 @@ svg.leaflet-image-layer.leaflet-interactive path {
       if (!token) {
         if (!promptIfMissing) { setBasemap("none"); return; }
         askName("Mapbox Satellite",
-          "Free Mapbox access token (from account.mapbox.com/access-tokens) \u2014 stored only in this browser.",
+          "Stored only in this browser \u2014 never uploaded or committed.",
           "",
           function (v) { lsSet(MAPBOX_TOKEN_KEY, v); setBasemap("mapboxsat"); },
           function () { setBasemap("none"); },
-          "Access token");
+          "Access token",
+          "New here? It's free, no credit card:" +
+          "<ol>" +
+          "<li>Sign up or log in at <a href=\"https://account.mapbox.com/access-tokens/\" target=\"_blank\" rel=\"noopener\">account.mapbox.com/access-tokens</a></li>" +
+          "<li>Copy your \u201cDefault public token\u201d (starts with <code>pk.</code>)</li>" +
+          "<li>Paste it below</li>" +
+          "</ol>");
         return;
       }
       url = p.url + "?access_token=" + encodeURIComponent(token);
@@ -2286,10 +2299,11 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   var dlg = $("dlg"), dlgOnOk = null, dlgOnCancel = null;
 
-  function askName(title, info, def, onOk, onCancel, label) {
+  function askName(title, info, def, onOk, onCancel, label, extraHtml) {
     $("dlgTitle").textContent = title;
     $("dlgLabel").textContent = label || "Value";
     $("dlgInfo").textContent = info || "";
+    $("dlgExtra").innerHTML = extraHtml || "";
     $("dlgName").value = def || "";
     dlgOnOk = onOk; dlgOnCancel = onCancel || null;
     dlg.showModal();
