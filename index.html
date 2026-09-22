@@ -814,6 +814,8 @@ svg.leaflet-image-layer.leaflet-interactive path {
   }
   .dash-card .v { font-size: 20px; font-weight: 700; color: var(--text); line-height: 1.2; }
   .dash-card .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; margin-top: 2px; }
+  .dash-card.warn { border-color: var(--danger); }
+  .dash-card.warn .v { color: var(--danger); }
   .dash-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
   .dash-chart-box {
     background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px;
@@ -2415,20 +2417,75 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   var dashCharts = { hist: null, degree: null, top: null };
 
+  // Node pairs sitting almost on top of each other are usually accidental
+  // duplicates from an import/snap, not a real design choice.
+  var OVERLAP_METERS = 3;
+  // Guard against an O(n^2) all-pairs scan stalling the UI on huge imports.
+  var OVERLAP_MAX_NODES = 1500;
+
   function computeStats() {
     var lengths = state.links.map(linkLength);
     var totalLen = lengths.reduce(function (a, b) { return a + b; }, 0);
-    var degrees = state.nodes.map(function (n) { return n.degree || 0; });
-    var avgDegree = degrees.length ? degrees.reduce(function (a, b) { return a + b; }, 0) / degrees.length : 0;
+    var isolated = state.nodes.filter(function (n) { return !n.degree; }).length;
+
+    // Connected components among linked nodes only -- isolated (degree 0)
+    // nodes are already surfaced by "Unconnected nodes" and would otherwise
+    // count as their own island here, which isn't useful information.
+    var adj = {};
+    state.links.forEach(function (l) {
+      (adj[l.a] || (adj[l.a] = [])).push(l.b);
+      (adj[l.b] || (adj[l.b] = [])).push(l.a);
+    });
+    var seen = {}, islands = 0;
+    state.nodes.forEach(function (n) {
+      if (!n.degree || seen[n.id]) return;
+      islands++;
+      var stack = [n.id];
+      seen[n.id] = true;
+      while (stack.length) {
+        var cur = stack.pop();
+        (adj[cur] || []).forEach(function (nb) {
+          if (!seen[nb]) { seen[nb] = true; stack.push(nb); }
+        });
+      }
+    });
+
+    // Extra links between a node pair that already has a connection --
+    // almost always a data-entry mistake rather than intentional.
+    var pairCounts = {}, duplicatePaths = 0;
+    state.links.forEach(function (l) {
+      var k = pairKey(l.a, l.b);
+      pairCounts[k] = (pairCounts[k] || 0) + 1;
+    });
+    Object.keys(pairCounts).forEach(function (k) {
+      if (pairCounts[k] > 1) duplicatePaths += pairCounts[k] - 1;
+    });
+
+    var overlapChecked = state.nodes.length <= OVERLAP_MAX_NODES;
+    var overlapPairs = 0;
+    if (overlapChecked) {
+      for (var i = 0; i < state.nodes.length; i++) {
+        for (var j = i + 1; j < state.nodes.length; j++) {
+          if (haversine(state.nodes[i], state.nodes[j]) < OVERLAP_METERS) overlapPairs++;
+        }
+      }
+    }
+
+    var busiestNode = null;
+    state.nodes.forEach(function (n) {
+      if (n.degree && (!busiestNode || n.degree > busiestNode.degree)) busiestNode = n;
+    });
+
     return {
       nodeCount: state.nodes.length,
       linkCount: state.links.length,
       totalLen: totalLen,
-      avgLen: lengths.length ? totalLen / lengths.length : 0,
-      minLen: lengths.length ? Math.min.apply(null, lengths) : 0,
-      maxLen: lengths.length ? Math.max.apply(null, lengths) : 0,
-      avgDegree: avgDegree,
-      isolated: degrees.filter(function (d) { return d === 0; }).length
+      isolated: isolated,
+      islands: islands,
+      duplicatePaths: duplicatePaths,
+      overlapPairs: overlapPairs,
+      overlapChecked: overlapChecked,
+      busiestNode: busiestNode
     };
   }
 
@@ -2522,18 +2579,31 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   function renderDashboard() {
     var stats = computeStats();
+    var overlapLabel = stats.overlapChecked
+      ? String(stats.overlapPairs)
+      : "\u2014";
+    var busiestLabel = stats.busiestNode
+      ? stats.busiestNode.name + " (" + stats.busiestNode.degree + ")"
+      : "\u2014";
     var cards = [
-      ["Nodes", stats.nodeCount],
-      ["Connections", stats.linkCount],
-      ["Total length", fmtLen(stats.totalLen)],
-      ["Average length", stats.linkCount ? fmtLen(stats.avgLen) : "\u2014"],
-      ["Shortest", stats.linkCount ? fmtLen(stats.minLen) : "\u2014"],
-      ["Longest", stats.linkCount ? fmtLen(stats.maxLen) : "\u2014"],
-      ["Avg connections / node", stats.nodeCount ? stats.avgDegree.toFixed(2) : "\u2014"],
-      ["Unconnected nodes", stats.isolated]
+      // Context: overall size of the network.
+      ["Nodes", stats.nodeCount, false],
+      ["Connections", stats.linkCount, false],
+      ["Total length", fmtLen(stats.totalLen), false],
+      ["Busiest node", busiestLabel, false, "Node with the most connections"],
+      // Health checks: flagged red when they point at something worth fixing.
+      ["Unconnected nodes", stats.isolated, stats.isolated > 0, "Nodes with no paths at all"],
+      ["Separate networks", stats.islands > 1 ? stats.islands : (stats.islands || "\u2014"), stats.islands > 1,
+        "Groups of linked nodes that aren't connected to each other. Should be 1 if everything is meant to be one network."],
+      ["Duplicate paths", stats.duplicatePaths, stats.duplicatePaths > 0, "Extra paths linking a pair of nodes that's already connected"],
+      ["Overlapping nodes", overlapLabel, stats.overlapChecked && stats.overlapPairs > 0,
+        stats.overlapChecked ? "Pairs of different nodes within 3 m of each other \u2014 likely accidental duplicates"
+          : "Skipped: too many nodes to check efficiently"]
     ];
     $("dashCards").innerHTML = cards.map(function (c) {
-      return '<div class="dash-card"><div class="v">' + esc(String(c[1])) + '</div><div class="k">' + esc(c[0]) + "</div></div>";
+      var warn = c[2] ? " warn" : "";
+      var title = c[3] ? ' title="' + esc(c[3]) + '"' : "";
+      return '<div class="dash-card' + warn + '"' + title + '><div class="v">' + esc(String(c[1])) + '</div><div class="k">' + esc(c[0]) + "</div></div>";
     }).join("");
 
     var hist = buildHistogram(state.links.map(linkLength));

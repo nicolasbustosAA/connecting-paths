@@ -87,10 +87,14 @@ remembered even if you later change the naming template or rename an endpoint no
   `Node {n}` / `FROM↔TO`; **Cancel** discards unsaved edits.
 - Great-circle length per path and total length in the status bar.
 - **Zoom to fit** (or press `F`) frames every node in view.
-- **Dashboard** button: summary cards (nodes, connections, total/average/min/max length,
-  average connections per node, unconnected nodes) plus three interactive charts — path
-  length distribution, node degree distribution, and the top 10 most-connected nodes.
-  Updates live as you add or remove connections.
+- **Dashboard** button: network-health cards focused on things worth acting on —
+  unconnected nodes, separate networks (linked groups that aren't connected to each
+  other; should be 1), duplicate paths (a pair of nodes linked more than once), and
+  overlapping nodes (distinct nodes within 3 m of each other, usually accidental
+  import duplicates) — flagged in red when non-zero/greater than one, plus context
+  cards (nodes, connections, total length, busiest node). Also three interactive
+  charts — path length distribution, node degree distribution, and the top
+  10 most-connected nodes. Updates live as you add or remove connections.
 - Basemaps: Streets (Esri, default) and Satellite (Esri), plus **Satellite (Mapbox)…** as a
   second, independently-sourced satellite option (useful since Mapbox and Esri refresh their
   imagery on different schedules, so one sometimes has a newer capture than the other for a
