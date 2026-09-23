@@ -58,9 +58,10 @@ it had before. Undoable like any other edit.
 
 ### Bulk style
 
-**Bulk style…** applies a color, opacity, icon scale (nodes) or line width (paths) to
-many nodes or paths at once, instead of editing them one by one. Pick what to target —
-**Nodes** or **Paths** — then **which ones**:
+**Bulk style…** applies a color, opacity, icon scale, icon (nodes) or line width (paths) to
+many nodes or paths at once, instead of editing them one by one. The dialog is split into
+two sections — **Match** (what to target) and **Style** (what to change about it). Pick
+what to target — **Nodes** or **Paths** — then **which ones**:
 
 - **All** — every node/path.
 - **Current selection** — whatever is currently selected on the map or in the sidebar.
@@ -82,6 +83,16 @@ from the matched items entirely, restoring whatever the loaded file originally s
 Bulk styles are separate from the file's own `<Style>` styling: turning **File styles** off
 only hides the file's original look, your bulk edits stay visible; they're also included
 when exporting KML, and are undoable (Ctrl+Z) like any other edit.
+
+**Icon** (nodes only) swaps the plain colored dot for a Google Maps-style pin marker, in a
+preset palette of 12 colors (red, orange, yellow, green, teal, blue, indigo, purple, pink,
+brown, gray, black) — the same look Google Earth/My Maps uses for its point placemarks, and
+what you'll see if you load one of their exported `.kml`/`.kmz` files into this app. No
+image files or internet connection are needed: each pin is generated on the fly as a small
+vector image. Pick the **&times;** swatch to explicitly clear a node's icon back to the plain
+colored dot (distinct from leaving **Icon** unchecked, which leaves whatever icon a matched
+node already has untouched). These pins are exported in KML the same way a file's own icon
+is, and round-trip correctly through **Copy style**/**Paste style** and a reload.
 
 ## Features
 

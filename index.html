@@ -833,7 +833,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   .dash-chart-canvas { position: relative; height: 220px; }
   .dash-chart-wide { grid-column: 1 / -1; }
   .dash-empty { color: var(--muted); padding: 20px 4px; }
-  .bulk-style-dlg { width: min(480px, 92vw); }
+  .bulk-style-dlg { width: min(520px, 92vw); max-height: 88vh; overflow: auto; }
   /* :not([hidden]) so the "hidden" attribute (used to show/hide this row based on the
      "Which ones" dropdown) isn't overridden by this same-specificity display rule. */
   .bulk-row:not([hidden]) { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
@@ -843,15 +843,39 @@ svg.leaflet-image-layer.leaflet-interactive path {
   .bulk-echo { color: var(--muted); font-size: 12px; margin-top: 8px; font-style: italic; }
   .bulk-match-count { font-size: 13px; font-weight: 600; margin-top: 2px; }
   .bulk-match-count.err { color: var(--danger); font-weight: 400; font-style: normal; }
+  /* Section headings inside the Bulk style dialog ("Match" / "Style"), giving the
+     panel a clearer visual hierarchy instead of one long undifferentiated list. */
+  .bulk-section-title {
+    margin: 16px 0 2px; padding-top: 12px; border-top: 1px solid var(--border);
+    color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .6px; font-weight: 600;
+  }
+  .bulk-section-title:first-of-type { margin-top: 4px; padding-top: 0; border-top: none; }
   .bulk-style-props {
-    display: grid; grid-template-columns: auto 1fr; gap: 8px 10px; align-items: center;
-    margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);
+    display: grid; grid-template-columns: auto 1fr; gap: 10px 10px; align-items: center;
+    margin-top: 10px;
   }
   .bulk-style-props input[type=color] {
     width: 100%; height: 26px; padding: 0; border: 1px solid var(--border); border-radius: 6px;
     background: var(--panel-2);
   }
   .bulk-style-props input[type=range], .bulk-style-props input[type=number] { width: 100%; }
+  /* Icon swatches: a wrapping row of small buttons, each previewing a Google-style
+     pin (or "None", to explicitly clear back to the plain colored dot) so picking
+     an icon for a bulk-matched set of nodes is a single click. */
+  .icon-swatches { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .icon-swatch {
+    width: 26px; height: 32px; padding: 0; border-radius: 5px; cursor: pointer;
+    /* A faint permanent border (not fully transparent) so a dark pin color, like
+       Black, still reads as a distinct chip against the dialog's own dark panel. */
+    border: 2px solid rgba(255,255,255,.14); background: var(--panel-2) center 3px / 18px 24px no-repeat;
+  }
+  .icon-swatch:hover { border-color: var(--border); }
+  .icon-swatch.sel { border-color: var(--accent); background-color: rgba(63,167,255,.15); }
+  .icon-swatch.none {
+    background-image: none !important; color: var(--muted); font-size: 15px; line-height: 1;
+    border: 2px dashed var(--border); display: flex; align-items: center; justify-content: center;
+  }
+  .icon-swatch.none.sel { border-color: var(--accent); color: var(--accent); }
 </style>
 </head>
 <body>
@@ -1018,8 +1042,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
   </div>
   <div class="sub" style="color:var(--muted);font-size:12px">
     Pick a set of nodes or paths by name, selection or connection state, then apply a color,
-    opacity, scale or width to all of them at once.
+    opacity, scale, icon or width to all of them at once.
   </div>
+
+  <div class="bulk-section-title">Match</div>
 
   <label class="lbl" for="bulkKind">Apply to</label>
   <select id="bulkKind">
@@ -1058,6 +1084,8 @@ svg.leaflet-image-layer.leaflet-interactive path {
   <div id="bulkQueryEcho" class="bulk-echo"></div>
   <div id="bulkMatchCount" class="bulk-match-count"></div>
 
+  <div class="bulk-section-title">Style</div>
+
   <div class="bulk-style-props">
     <label class="bulk-check"><input id="bulkApplyColor" type="checkbox" checked /> Color</label>
     <input id="bulkColor" type="color" value="#3fa7ff" />
@@ -1067,6 +1095,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
     <label class="bulk-check" id="bulkScaleRow"><input id="bulkApplyScale" type="checkbox" /> Icon scale</label>
     <input id="bulkScale" type="number" min="0.3" max="4" step="0.1" value="1" />
+
+    <label class="bulk-check" id="bulkIconRow"><input id="bulkApplyIcon" type="checkbox" /> Icon</label>
+    <div id="bulkIconSwatches" class="icon-swatches" title="Google Maps-style pin markers, in a preset color palette"></div>
 
     <label class="bulk-check" id="bulkWidthRow" hidden><input id="bulkApplyWidth" type="checkbox" /> Width</label>
     <input id="bulkWidth" type="number" min="1" max="12" step="1" value="3" hidden />
@@ -1580,6 +1611,47 @@ svg.leaflet-image-layer.leaflet-interactive path {
     return out;
   }
 
+  /* ---------------- built-in "Google" pin icons ----------------
+     Google Earth/My Maps mark points with a teardrop pin (a colored drop with a
+     white circle punched out of it) baked out as a small image per color/style
+     rather than a single icon tinted at render time - the same approach a loaded
+     KMZ's own icons use. Recreating that shape as inline SVG, rendered to a data
+     URI, gives every node the same look without needing to ship or fetch any
+     image files, and it round-trips through KML export exactly like a file's own
+     icon href does (resolveHref already special-cases data: URIs as usable as-is). */
+  var GOOGLE_PIN_COLORS = [
+    { name: "Red", hex: "#EA4335" },
+    { name: "Orange", hex: "#FF8800" },
+    { name: "Yellow", hex: "#FBBC04" },
+    { name: "Green", hex: "#34A853" },
+    { name: "Teal", hex: "#24C1E0" },
+    { name: "Blue", hex: "#4285F4" },
+    { name: "Indigo", hex: "#3F51B5" },
+    { name: "Purple", hex: "#A142F4" },
+    { name: "Pink", hex: "#F439A0" },
+    { name: "Brown", hex: "#795548" },
+    { name: "Gray", hex: "#757575" },
+    { name: "Black", hex: "#202124" }
+  ];
+
+  var googlePinCache = {};
+  /* Every URI this generates is recorded here so nodeIcon() can anchor it by its
+     pointed tip (like a real Google Maps marker) instead of by its center, which
+     is the only sane default for an arbitrary file-provided icon of unknown shape. */
+  var googlePinUriSet = {};
+
+  function googlePinDataUri(hex) {
+    if (googlePinCache[hex]) return googlePinCache[hex];
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="32" viewBox="0 0 24 32">' +
+      '<path d="M12 0C5.373 0 0 5.373 0 12c0 9 12 20 12 20s12-11 12-20C24 5.373 18.627 0 12 0z" fill="' + hex + '"/>' +
+      '<circle cx="12" cy="12" r="5" fill="#fff"/>' +
+      "</svg>";
+    var uri = "data:image/svg+xml," + encodeURIComponent(svg);
+    googlePinCache[hex] = uri;
+    googlePinUriSet[uri] = true;
+    return uri;
+  }
+
   function parseKml(text, assets) {
     text = String(text).replace(/^[\uFEFF\s]+/, "");
     var doc = new DOMParser().parseFromString(text, "application/xml");
@@ -1799,11 +1871,15 @@ svg.leaflet-image-layer.leaflet-interactive path {
     var scale = (st && st.scale) ? Math.max(0.3, Math.min(4, st.scale)) : 1;
     var dim = iconStatus[url];
     var w = Math.round(Math.min(dim.w, 32) * scale), h = Math.round(Math.min(dim.h, 32) * scale);
+    /* A built-in Google pin has a known pointed tip at its bottom-center, so it's
+       anchored there (like a real map marker); any other icon (from a loaded file)
+       is of unknown shape and keeps the previous center anchor. */
+    var anchorY = googlePinUriSet[url] ? h : h / 2;
     return L.icon({
       iconUrl: url,
       iconSize: [w, h],
-      iconAnchor: [w / 2, h / 2],
-      tooltipAnchor: [0, -h / 2],
+      iconAnchor: [w / 2, anchorY],
+      tooltipAnchor: [0, -anchorY],
       className: "node-icon" + (isNodeSelected(node.id) ? " sel" : "")
     });
   }
@@ -2738,8 +2814,54 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   function bulkPropertiesChecked(kind) {
     if (kind === "link") return $("bulkApplyColor").checked || $("bulkApplyOpacity").checked || $("bulkApplyWidth").checked;
-    return $("bulkApplyColor").checked || $("bulkApplyOpacity").checked || $("bulkApplyScale").checked;
+    return $("bulkApplyColor").checked || $("bulkApplyOpacity").checked || $("bulkApplyScale").checked || $("bulkApplyIcon").checked;
   }
+
+  /* Icon swatches: a "None" chip plus one per GOOGLE_PIN_COLORS entry. Built once
+     (the pin images are cheap to generate and reused across every dialog open);
+     `bulkIconChoice` holds the currently picked hex, or "" for "None" (explicit
+     clear back to the plain colored dot, distinct from leaving Icon unchecked -
+     which leaves whatever icon a matched item already has untouched). */
+  var bulkIconChoice = "";
+
+  function updateBulkIconSelectionUI() {
+    var wrap = $("bulkIconSwatches");
+    if (!wrap) return;
+    Array.prototype.forEach.call(wrap.querySelectorAll(".icon-swatch"), function (btn) {
+      btn.classList.toggle("sel", (btn.dataset.hex || "") === bulkIconChoice);
+    });
+  }
+
+  function buildBulkIconSwatches() {
+    var wrap = $("bulkIconSwatches");
+    if (!wrap) return;
+    var noneBtn = document.createElement("button");
+    noneBtn.type = "button";
+    noneBtn.className = "icon-swatch none";
+    noneBtn.title = "None (plain colored dot)";
+    noneBtn.dataset.hex = "";
+    noneBtn.textContent = "\u00d7";
+    wrap.appendChild(noneBtn);
+    GOOGLE_PIN_COLORS.forEach(function (c) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "icon-swatch";
+      btn.title = c.name + " pin";
+      btn.dataset.hex = c.hex;
+      btn.style.backgroundImage = "url(" + googlePinDataUri(c.hex) + ")";
+      wrap.appendChild(btn);
+    });
+    wrap.addEventListener("click", function (e) {
+      var btn = e.target.closest && e.target.closest(".icon-swatch");
+      if (!btn) return;
+      bulkIconChoice = btn.dataset.hex || "";
+      updateBulkIconSelectionUI();
+      refreshBulkDialog();
+    });
+    updateBulkIconSelectionUI();
+  }
+
+  buildBulkIconSwatches();
 
   function refreshBulkDialog() {
     var q = currentBulkQuery();
@@ -2751,6 +2873,8 @@ svg.leaflet-image-layer.leaflet-interactive path {
     $("bulkConnectionOpts").hidden = q.mode !== "connection";
     $("bulkScaleRow").hidden = isLink;
     $("bulkScale").hidden = isLink;
+    $("bulkIconRow").hidden = isLink;
+    $("bulkIconSwatches").hidden = isLink;
     $("bulkWidthRow").hidden = !isLink;
     $("bulkWidth").hidden = !isLink;
 
@@ -2791,6 +2915,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
     $("bulkOpacity").value = "1";
     $("bulkApplyScale").checked = false;
     $("bulkScale").value = "1";
+    $("bulkApplyIcon").checked = false;
+    bulkIconChoice = "";
+    updateBulkIconSelectionUI();
     $("bulkApplyWidth").checked = false;
     $("bulkWidth").value = "3";
     refreshBulkDialog();
@@ -2809,7 +2936,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   [
     "bulkKind", "bulkMode", "bulkNameMode", "bulkNameText", "bulkInvert", "bulkConnectionMode",
-    "bulkApplyColor", "bulkApplyOpacity", "bulkApplyScale", "bulkApplyWidth"
+    "bulkApplyColor", "bulkApplyOpacity", "bulkApplyScale", "bulkApplyIcon", "bulkApplyWidth"
   ].forEach(function (id) {
     var el = $(id);
     el.addEventListener("input", refreshBulkDialog);
@@ -2822,6 +2949,14 @@ svg.leaflet-image-layer.leaflet-interactive path {
     if ($("bulkApplyOpacity").checked) patch.opacity = parseFloat($("bulkOpacity").value);
     if (!isLink && $("bulkApplyScale").checked) patch.scale = parseFloat($("bulkScale").value);
     if (isLink && $("bulkApplyWidth").checked) patch.width = parseFloat($("bulkWidth").value);
+    /* "" (bulkIconChoice left on "None") explicitly clears the icon back to the
+       plain colored dot; mergeStyle() treats "" as a real override (unlike null,
+       which would leave a file-provided icon showing through untouched). */
+    if (!isLink && $("bulkApplyIcon").checked) {
+      var iconUri = bulkIconChoice ? googlePinDataUri(bulkIconChoice) : "";
+      patch.iconUrl = iconUri;
+      patch.href = iconUri;
+    }
     return patch;
   }
 
@@ -2842,6 +2977,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
       item.userStyle = Object.assign({}, patch);
     });
     clearBulkPreview();
+    /* A freshly picked icon may not be in iconStatus yet - preload it so it shows
+       immediately instead of waiting for some unrelated later redraw to catch it. */
+    if (patch.iconUrl) preloadIcons([patch.iconUrl], function (changed) { if (changed) drawNodes(); });
     drawNodes();
     drawLinks();
     renderAll();
