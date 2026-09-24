@@ -129,7 +129,9 @@ is, and round-trip correctly through **Copy style**/**Paste style** and a reload
   a dialog with numeric, range-validated latitude/longitude fields plus the name; renaming a
   node updates any of its connections that haven't been manually renamed; path **rename**
   sets a custom name that survives future template or endpoint-name changes; **del** removes
-  the row (with the same frictionless Undo toast as the Delete tool).
+  the row (with the same frictionless Undo toast as the Delete tool). Double-clicking a node
+  on the map while the **Select** tool is active is a shortcut for the same rename (name only,
+  no coordinate editing).
 - **Naming…** dialog: set the auto-naming format for future nodes and for all paths.
   Placeholders: `{n}`/`{n2}`/`{n3}`/`{n4}` (sequential number, optionally zero-padded);
   the path template also accepts `{from}`/`{to}` (node names as typed) and

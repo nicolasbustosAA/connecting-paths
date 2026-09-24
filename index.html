@@ -903,7 +903,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     </div>
   </div>
   <div class="toolgroup" id="toolGroup">
-    <button data-tool="select" class="on" title="Click a node or path to select it; drag a box or shift-click to select several (V)">Select</button>
+    <button data-tool="select" class="on" title="Click a node or path to select it; drag a box or shift-click to select several. Double-click a node to rename it (V)">Select</button>
     <button data-tool="pan" title="Drag anywhere - even over nodes or paths - to move the map around without selecting or moving anything; handy without a mouse (H)">Pan</button>
     <button data-tool="node" title="Click, then click the map to place nodes (N)">Add node</button>
     <button data-tool="path" title="Click, then click two nodes to connect them; existing paths become click-through (P)">Add path</button>
@@ -1994,6 +1994,14 @@ svg.leaflet-image-layer.leaflet-interactive path {
         L.DomEvent.stopPropagation(e);
         if (suppressClick) { suppressClick = false; return; }
         nodeClicked(node, e);
+      });
+      /* Double-clicking a node while in Select renames it in place, instead of the
+         map's usual double-click-zoom - which would otherwise fire since only
+         Add node disables it (see setTool). */
+      m.on("dblclick", function (e) {
+        if (state.tool !== "select") return;
+        L.DomEvent.stop(e);
+        renameNode(node.id);
       });
       m.on("mouseover", function () {
         if (state.tool !== "delete") return;
@@ -3608,6 +3616,27 @@ svg.leaflet-image-layer.leaflet-interactive path {
     msg("Node updated.", "ok");
   }
 
+  function renameNode(id) {
+    var node = state.byId[id];
+    if (!node) return;
+    askName("Rename node", "Connected paths that haven't been manually renamed update automatically to match.",
+      node.name,
+      function (v) {
+        pushUndo("rename " + node.name);
+        node.name = v;
+        state.links.forEach(function (l) {
+          if ((l.a === node.id || l.b === node.id) && !l.customName) {
+            l.name = pathName(state.byId[l.a], state.byId[l.b], l.id);
+          }
+        });
+        drawNodes();
+        drawLinks();
+        renderAll();
+        save();
+        msg("Node renamed.", "ok");
+      }, null, "Node name");
+  }
+
   function renameLink(id) {
     var link = state.links.filter(function (l) { return l.id === id; })[0];
     if (!link) return;
@@ -3699,7 +3728,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
         hint.textContent = "Re-route is on: drag a path's end onto a different node to rewire it. Press Esc to stop."; break;
       default:
         hint.textContent = "Click a node or path to select it \u2014 shift-click or drag a box to select several. " +
-          "Delete removes the selection, Ctrl+Z undoes, F zooms to fit.";
+          "Double-click a node to rename it. Delete removes the selection, Ctrl+Z undoes, F zooms to fit.";
     }
   }
 
