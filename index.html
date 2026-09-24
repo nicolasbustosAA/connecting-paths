@@ -3740,7 +3740,8 @@ svg.leaflet-image-layer.leaflet-interactive path {
         hint.textContent = "Add node is on: click anywhere on the map to place a node. Press Esc to stop."; break;
       case "path":
         hint.textContent = "Add path is on: click a node, then a second node to connect them \u2014 keep clicking " +
-          "to chain a route. Existing paths are click-through while this is on. Press Esc to stop."; break;
+          "to chain a route. Existing paths are click-through while this is on. Esc stops the current chain " +
+          "(stays in Add path so you can start a new one elsewhere) \u2014 press it again to exit."; break;
       case "move":
         hint.textContent = "Move is on: drag a node (or a multi-node selection) to reposition it \u2014 connected " +
           "paths follow in real time. Press Esc to stop."; break;
@@ -4406,6 +4407,13 @@ svg.leaflet-image-layer.leaflet-interactive path {
       return;
     }
     if (state.tool === "select") clearSelection();
+    if (state.tool === "path" && state.linkAnchor) {
+      /* Clicking empty map (not a node) while a chain is in progress cancels it,
+         same as Esc, without leaving Add path. */
+      state.linkAnchor = null;
+      clearSelection();
+      msg("Path stopped. Click any node to start a new one.", "ok");
+    }
   });
 
   document.addEventListener("keydown", function (e) {
@@ -4419,6 +4427,19 @@ svg.leaflet-image-layer.leaflet-interactive path {
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
 
     if (e.key === "Escape") {
+      /* Add path's chain-linking keeps the last-connected node as the anchor for
+         speed, but that meant stopping a chain to start an unrelated one elsewhere
+         required leaving Add path entirely (Escape switched tools) and re-selecting
+         it - only then was the anchor actually cleared. Now Escape just drops the
+         current anchor and stays in Add path, so the very next node click starts a
+         fresh, independent path; a second Escape (no anchor left) exits to Select
+         as before. */
+      if (state.tool === "path" && state.linkAnchor) {
+        state.linkAnchor = null;
+        clearSelection();
+        msg("Path stopped. Click any node to start a new one.", "ok");
+        return;
+      }
       if (state.tool !== "select") { setTool("select"); }
       else { clearSelection(); }
       return;
