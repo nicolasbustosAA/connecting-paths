@@ -1784,8 +1784,15 @@ svg.leaflet-image-layer.leaflet-interactive path {
        because their endpoints sit on top of each other) are kept as separate links
        rather than silently dropped, since overlapping nodes make that resolution
        inherently ambiguous and dropping data is worse than an occasional duplicate
-       (which the dashboard's "Duplicate paths" check already surfaces for review). */
+       (which the dashboard's "Duplicate paths" check already surfaces for review).
+       matchUsage tracks how many endpoints have resolved to each node so far, so
+       when several nodes sit on the exact same spot (two labeled pieces of kit at
+       one physical location, common in hand-drawn KML), matchNodeByCoord can spread
+       ambiguous matches across them instead of always picking the same one and
+       starving its twin of every edge - or, worse, resolving both ends of one line
+       to that single twin and having it silently discarded as a false self-loop. */
     var links = [];
+    var matchUsage = {};
     placemarks.forEach(function (pm) {
       var style = linkStyleFrom(placemarkStyle(pm, styles));
       var fromId = extendedDataValue(pm, "cpFrom");
@@ -1799,9 +1806,14 @@ svg.leaflet-image-layer.leaflet-interactive path {
           return { lon: parseFloat(p[0]), lat: parseFloat(p[1]) };
         }).filter(function (p) { return isFinite(p.lat) && isFinite(p.lon); });
         if (pts.length < 2) return;
-        var a = (fromId && srcIdMap[fromId]) || matchNodeByCoord(nodes, pts[0].lat, pts[0].lon);
-        var b = (toId && srcIdMap[toId]) || matchNodeByCoord(nodes, pts[pts.length - 1].lat, pts[pts.length - 1].lon);
+        var a = (fromId && srcIdMap[fromId]) ||
+          matchNodeByCoord(nodes, pts[0].lat, pts[0].lon, { usage: matchUsage });
+        var b = (toId && srcIdMap[toId]) ||
+          matchNodeByCoord(nodes, pts[pts.length - 1].lat, pts[pts.length - 1].lon,
+            { usage: matchUsage, exclude: a && a.id });
         if (!a || !b || a.id === b.id) return;
+        matchUsage[a.id] = (matchUsage[a.id] || 0) + 1;
+        matchUsage[b.id] = (matchUsage[b.id] || 0) + 1;
         links.push({ a: a.id, b: b.id, style: style });
       });
     });
@@ -1809,13 +1821,27 @@ svg.leaflet-image-layer.leaflet-interactive path {
     return { nodes: nodes, links: links };
   }
 
-  function matchNodeByCoord(nodesArr, lat, lon) {
+  function matchNodeByCoord(nodesArr, lat, lon, opts) {
+    opts = opts || {};
     var best = null, bestD = Infinity;
     nodesArr.forEach(function (n) {
       var d = haversine(n, { lat: lat, lon: lon });
       if (d < bestD) { bestD = d; best = n; }
     });
-    return (best && bestD <= 1) ? best : null; // within 1 m
+    if (!best || bestD > 1) return null; // within 1 m
+    /* True coincident duplicates (same physical spot) sit within a couple of
+       centimeters of each other - well inside GPS/hand-drawing noise for anything
+       genuinely distinct, so a tight epsilon here won't accidentally rope in a
+       merely-nearby node that should stay unambiguous. */
+    var tied = nodesArr.filter(function (n) { return haversine(n, { lat: lat, lon: lon }) <= bestD + 0.05; });
+    if (tied.length > 1) {
+      var candidates = opts.exclude ? tied.filter(function (n) { return n.id !== opts.exclude; }) : tied;
+      if (!candidates.length) candidates = tied;
+      var usage = opts.usage || {};
+      candidates.sort(function (x, y) { return (usage[x.id] || 0) - (usage[y.id] || 0); });
+      best = candidates[0];
+    }
+    return best;
   }
 
   /* ---------------- rendering ---------------- */
