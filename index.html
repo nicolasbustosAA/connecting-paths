@@ -876,6 +876,15 @@ svg.leaflet-image-layer.leaflet-interactive path {
     border: 2px dashed var(--border); display: flex; align-items: center; justify-content: center;
   }
   .icon-swatch.none.sel { border-color: var(--accent); color: var(--accent); }
+  .export-dlg { width: min(420px, 92vw); }
+  .export-opt {
+    display: flex; align-items: flex-start; gap: 10px; padding: 9px 8px; margin-top: 4px;
+    border-radius: 8px; cursor: pointer; border: 1px solid transparent;
+  }
+  .export-opt:hover { background: var(--panel-2); }
+  .export-opt input[type=checkbox] { margin-top: 3px; flex: none; }
+  .export-opt-title { font-weight: 600; font-size: 13px; }
+  .export-opt-sub { color: var(--muted); font-size: 11px; margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -888,9 +897,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
       <input id="fileKml" type="file" accept=".kml,.kmz,.xml" hidden />
       <button id="btnImportCsv">Import CSV&hellip;</button>
       <input id="fileCsv" type="file" accept=".csv,.txt" hidden />
-      <button id="btnExportCsv" disabled>Export CSV</button>
-      <button id="btnExportKml" disabled>Export KML</button>
-      <button id="btnExportKmz" disabled title="Export a .kmz with icon images bundled in, so image-based node styles survive the round trip">Export KMZ</button>
+      <button id="btnExport" disabled>Export&hellip;</button>
       <hr class="popover-sep" />
       <button id="btnClear" class="danger" disabled>Clear links</button>
     </div>
@@ -1108,6 +1115,50 @@ svg.leaflet-image-layer.leaflet-interactive path {
     <button id="bulkStyleReset" class="danger">Reset to file style</button>
     <button id="bulkStyleCancel">Cancel</button>
     <button id="bulkStyleApply" class="primary">Apply</button>
+  </div>
+</dialog>
+
+<dialog id="exportDlg" class="export-dlg">
+  <div class="dash-head">
+    <h3>Export</h3>
+    <button id="exportClose">Close</button>
+  </div>
+  <div class="sub" style="color:var(--muted);font-size:12px">
+    Pick any combination of formats, then choose where to save each one.
+  </div>
+
+  <label class="export-opt">
+    <input id="exportWantCsv" type="checkbox" checked />
+    <div>
+      <div class="export-opt-title">CSV</div>
+      <div class="export-opt-sub" id="exportCsvSub">One row per path (from, to, length, names)</div>
+    </div>
+  </label>
+
+  <label class="export-opt">
+    <input id="exportWantKml" type="checkbox" checked />
+    <div>
+      <div class="export-opt-title">KML</div>
+      <div class="export-opt-sub">Nodes and paths, opens directly in Google Earth or QGIS</div>
+    </div>
+  </label>
+
+  <label class="export-opt">
+    <input id="exportWantKmz" type="checkbox" />
+    <div>
+      <div class="export-opt-title">KMZ</div>
+      <div class="export-opt-sub" id="exportKmzSub">Same as KML, zipped with bundled icon images so image-based styles survive</div>
+    </div>
+  </label>
+
+  <div class="sub" style="color:var(--muted);font-size:11px;margin-top:10px">
+    Picking one format lets you choose the exact save location (where your browser supports it);
+    picking more than one downloads each to your browser's normal downloads location instead.
+  </div>
+
+  <div class="btns">
+    <button id="exportCancel">Cancel</button>
+    <button id="exportGo" class="primary">Export</button>
   </div>
 </dialog>
 
@@ -2659,9 +2710,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
       list.appendChild(row);
     });
     $("linkCount").textContent = state.links.length;
-    $("btnExportCsv").disabled = state.nodes.length === 0;
-    $("btnExportKml").disabled = state.nodes.length === 0;
-    $("btnExportKmz").disabled = state.nodes.length === 0;
+    $("btnExport").disabled = state.nodes.length === 0;
     $("btnClear").disabled = state.links.length === 0;
     $("btnDashboard").disabled = state.nodes.length === 0;
     $("btnBulkStyle").disabled = state.nodes.length === 0;
@@ -3694,10 +3743,12 @@ svg.leaflet-image-layer.leaflet-interactive path {
     return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
   }
 
-  function exportCsv() {
-    /* With no connections yet there is nothing to write in the path-shaped CSV, so
-       export the nodes instead rather than handing back an empty file. */
-    if (!state.links.length) { exportNodesCsv(); return; }
+  /* Builds the CSV export as { name, text, note }, without writing anything to
+     disk - shared by the combined Export dialog. With no connections yet there
+     is nothing to write in the path-shaped CSV, so it falls back to a
+     nodes-only CSV rather than handing back an empty file. */
+  function buildCsvExport() {
+    if (!state.links.length) return buildNodesCsvExport();
     var head = ["path_name", "from_name", "from_lat", "from_lon", "to_name", "to_lat", "to_lon", "length_m", "source_kml"];
     var rows = [head.join(",")];
     state.links.forEach(function (l) {
@@ -3708,11 +3759,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
         linkLength(l).toFixed(2), state.fileName
       ].map(csvCell).join(","));
     });
-    download(baseName() + "_paths.csv", rows.join("\r\n"), "text/csv");
-    msg("CSV exported.", "ok");
+    return { name: baseName() + "_paths.csv", text: rows.join("\r\n"), note: null };
   }
 
-  function exportNodesCsv() {
+  function buildNodesCsvExport() {
     var head = ["node_name", "lat", "lon", "alt_m", "connections", "source_kml"];
     var rows = [head.join(",")];
     state.nodes.forEach(function (n) {
@@ -3720,8 +3770,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
         n.name, n.lat.toFixed(8), n.lon.toFixed(8), n.alt || 0, n.degree || 0, state.fileName
       ].map(csvCell).join(","));
     });
-    download(baseName() + "_nodes.csv", rows.join("\r\n"), "text/csv");
-    msg("No connections yet \u2014 exported a nodes-only CSV.", "ok");
+    return { name: baseName() + "_nodes.csv", text: rows.join("\r\n"), note: "nodes-only" };
   }
 
   function importCsv(file) {
@@ -3898,9 +3947,8 @@ svg.leaflet-image-layer.leaflet-interactive path {
     return out.join("\n");
   }
 
-  function exportKml() {
-    download(baseName() + "_paths.kml", buildKmlBody(null), "application/vnd.google-earth.kml+xml");
-    msg("KML exported.", "ok");
+  function buildKmlExport() {
+    return { name: baseName() + "_paths.kml", text: buildKmlBody(null) };
   }
 
   /* ---------------- KMZ export (zipped KML + bundled icon images) ----------------
@@ -3972,7 +4020,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     return new Blob(localParts.concat(centralParts, [eocd]), { type: "application/vnd.google-earth.kmz" });
   }
 
-  function exportKmz() {
+  function buildKmzExport() {
     var neededImages = {};
     function hrefFor(href) {
       if (!href) return href;
@@ -3985,10 +4033,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     var files = [{ name: "doc.kml", bytes: new TextEncoder().encode(kml) }];
     var imageKeys = Object.keys(neededImages);
     imageKeys.forEach(function (key) { files.push({ name: key, bytes: neededImages[key] }); });
-    downloadBlob(baseName() + "_paths.kmz", buildZip(files));
-    msg("KMZ exported" + (imageKeys.length
-      ? " with " + imageKeys.length + " icon image" + (imageKeys.length === 1 ? "" : "s") + " bundled."
-      : "."), "ok");
+    return { name: baseName() + "_paths.kmz", blob: buildZip(files), imageCount: imageKeys.length };
   }
 
   function baseName() {
@@ -4003,8 +4048,98 @@ svg.leaflet-image-layer.leaflet-interactive path {
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   }
 
-  function download(name, content, mime) {
-    downloadBlob(name, new Blob(["\uFEFF" + content], { type: mime + ";charset=utf-8" }));
+  /* Saves a Blob under the given suggested name. Uses the File System Access API
+     (when the browser supports it) so the user picks the destination folder
+     themselves, exactly like a native "Save As" dialog; falls back to a normal
+     browser download (goes to the browser's configured downloads location)
+     everywhere else, or if the picker itself fails for a reason other than the
+     user cancelling. Returns a promise resolving to false only when the user
+     explicitly cancelled the picker, so callers can skip it from a summary.
+     `allowPicker` is false when several formats are being exported together:
+     browsers only honor the picker once per user gesture/click, so a second or
+     third showSaveFilePicker() call in the same export fails outright (with
+     "user activation required", confirmed via testing) - in that case every
+     file just downloads to the browser's normal downloads location instead. */
+  function saveBlob(name, blob, mimeType, description, extensions, allowPicker) {
+    if (!allowPicker || typeof window.showSaveFilePicker !== "function") {
+      downloadBlob(name, blob);
+      return Promise.resolve(true);
+    }
+    var accept = {};
+    accept[mimeType] = extensions;
+    return window.showSaveFilePicker({
+      suggestedName: name,
+      types: [{ description: description, accept: accept }]
+    }).then(function (handle) {
+      return handle.createWritable().then(function (writable) {
+        return writable.write(blob).then(function () { return writable.close(); });
+      });
+    }).then(function () { return true; }).catch(function (err) {
+      if (err && err.name === "AbortError") return false; // user cancelled the save dialog
+      downloadBlob(name, blob); // picker failed for another reason - fall back to a plain download
+      return true;
+    });
+  }
+
+  /* ---------------- combined export dialog ---------------- */
+
+  function openExportDlg() {
+    $("exportCsvSub").textContent = state.links.length
+      ? "One row per path (from, to, length, names)"
+      : "No connections yet \u2014 will export nodes instead";
+    $("exportKmzSub").textContent = Object.keys(state.assetBytes).length
+      ? "Same as KML, zipped with bundled icon images so image-based styles survive"
+      : "Same as KML, zipped (no bundled icon images available in this session)";
+    $("exportDlg").showModal();
+  }
+
+  /* Saves each checked format in turn (sequentially, so at most one native save
+     dialog is open at a time) and reports one combined status message at the
+     end - including how many icon images KMZ bundled, if any. */
+  function runExport() {
+    var wantCsv = $("exportWantCsv").checked;
+    var wantKml = $("exportWantKml").checked;
+    var wantKmz = $("exportWantKmz").checked;
+    var wantCount = (wantCsv ? 1 : 0) + (wantKml ? 1 : 0) + (wantKmz ? 1 : 0);
+    if (!wantCount) { msg("Pick at least one format to export.", "err"); return; }
+    // A native "choose where to save" dialog is only offered when exporting a
+    // single format - see the note on saveBlob() for why more than one in the
+    // same click breaks the browser's file picker.
+    var allowPicker = wantCount === 1;
+    $("exportDlg").close();
+
+    var done = [], chain = Promise.resolve();
+    if (wantCsv) {
+      chain = chain.then(function () {
+        var csv = buildCsvExport();
+        var blob = new Blob(["\uFEFF" + csv.text], { type: "text/csv;charset=utf-8" });
+        return saveBlob(csv.name, blob, "text/csv", "CSV file", [".csv"], allowPicker).then(function (saved) {
+          if (saved) done.push(csv.note ? "CSV (nodes)" : "CSV");
+        });
+      });
+    }
+    if (wantKml) {
+      chain = chain.then(function () {
+        var kml = buildKmlExport();
+        var blob = new Blob(["\uFEFF" + kml.text], { type: "application/vnd.google-earth.kml+xml;charset=utf-8" });
+        return saveBlob(kml.name, blob, "application/vnd.google-earth.kml+xml", "KML file", [".kml"], allowPicker).then(function (saved) {
+          if (saved) done.push("KML");
+        });
+      });
+    }
+    if (wantKmz) {
+      chain = chain.then(function () {
+        var kmz = buildKmzExport();
+        return saveBlob(kmz.name, kmz.blob, "application/vnd.google-earth.kmz", "KMZ file", [".kmz"], allowPicker).then(function (saved) {
+          if (saved) done.push("KMZ" + (kmz.imageCount
+            ? " (" + kmz.imageCount + " icon image" + (kmz.imageCount === 1 ? "" : "s") + " bundled)"
+            : ""));
+        });
+      });
+    }
+    chain.then(function () {
+      msg(done.length ? "Exported " + done.join(", ") + "." : "Export cancelled.", done.length ? "ok" : "err");
+    });
   }
 
   /* ---------------- toolbar wiring ---------------- */
@@ -4022,9 +4157,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
     if (e.target.files[0]) importCsv(e.target.files[0]);
     e.target.value = "";
   });
-  $("btnExportCsv").addEventListener("click", exportCsv);
-  $("btnExportKml").addEventListener("click", exportKml);
-  $("btnExportKmz").addEventListener("click", exportKmz);
+  $("btnExport").addEventListener("click", openExportDlg);
+  $("exportClose").addEventListener("click", function () { $("exportDlg").close(); });
+  $("exportCancel").addEventListener("click", function () { $("exportDlg").close(); });
+  $("exportGo").addEventListener("click", runExport);
   $("btnUndo").addEventListener("click", undo);
   $("btnRedo").addEventListener("click", redo);
   $("btnClear").addEventListener("click", function () {

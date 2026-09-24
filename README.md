@@ -14,8 +14,9 @@ click node pairs to connect them (paths are auto-named from a configurable templ
 5. The path is created immediately and named from the path template — `FROM↔TO` by default
    (the two node names in upper case, joined by `↔`, no spaces). A line is drawn between
    the two nodes.
-6. Repeat for every pair (keep clicking to chain a route), then **Export CSV**, **Export KML**
-   and/or **Export KMZ** (bundles any of the source file's own icon images along with it).
+6. Repeat for every pair (keep clicking to chain a route), then **Export…** and pick any
+   combination of CSV, KML and KMZ (KMZ bundles any of the source file's own icon images
+   along with it).
 
 ## Editing tools
 
@@ -188,9 +189,18 @@ If you export before drawing any connections, a nodes-only CSV is written instea
 node_name,lat,lon,alt_m,connections,source_kml
 ```
 
-## Exported KML / KMZ
+## Exporting
 
-**Export KML** contains a `Nodes` folder (the original points) and a `Paths` folder with
+One **Export…** button (in the File menu) opens a dialog where you check any combination
+of **CSV**, **KML** and **KMZ** and click **Export**. Picking a single format lets your
+browser offer a native "save as" dialog so you choose the exact destination (where
+supported — see below); picking more than one just downloads each file to your browser's
+normal downloads location, since browsers only allow one such picker per click.
+
+**CSV** writes one row per connection (or, with nothing connected yet, one row per node —
+see above).
+
+**KML** contains a `Nodes` folder (the original points) and a `Paths` folder with
 one `LineString` placemark per connection, named `FROM↔TO`. Opens directly in Google Earth
 or QGIS. Loading this file back into the app (via **Load KML/KMZ…** or drag-and-drop)
 restores both the nodes and the connections.
@@ -202,18 +212,22 @@ default orange `nodeStyle`/`pathStyle`. This happens regardless of the **File st
 button, which only controls what is drawn on screen. Note that an exported `.kml` is a
 plain file, not an archive, so icon `href`s that pointed inside a `.kmz` are written out
 unchanged and will only resolve if those images sit next to the exported file — this is
-where **Export KMZ** helps (see below). Built-in **Google-pin** icons (from Bulk style's
+where **KMZ** helps (see below). Built-in **Google-pin** icons (from Bulk style's
 Icon option, see above) are unaffected either way, since they're a self-contained `data:`
 URI, not a file reference.
 
-**Export KMZ** writes the same KML but as a real `.kmz` archive, bundling in the exact icon
+**KMZ** writes the same KML but as a real `.kmz` archive, bundling in the exact icon
 images used by any node whose style came from an icon packed inside the loaded `.kmz` —
 so that style survives the round-trip with zero extra steps, the same as opening it in
 Google Earth. It reuses the image bytes kept in memory since the file was loaded, so it
 only has anything to bundle right after loading a `.kmz` with its own icons; loading a
 plain `.kml`, reloading the page (KMZ image bytes don't survive a reload, see Notes below),
 or using only the built-in Google-pin icons all produce a KMZ with no bundled images, which
-is equivalent to Export KML. The status bar reports how many images were bundled.
+is equivalent to KML. The status bar reports how many images were bundled.
+
+Whether you get a native save dialog also depends on your browser: it's only offered where
+the File System Access API is available (e.g. desktop Chrome/Edge); elsewhere every export
+downloads to the normal downloads location regardless of how many formats you picked.
 
 ## Notes
 
