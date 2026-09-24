@@ -1508,6 +1508,24 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   function textOf(el) { return el ? (el.textContent || "").trim() : ""; }
 
+  /* Reads <ExtendedData><Data name="..."><value>...</value></Data></ExtendedData>,
+     used to round-trip this app's own node ids through KML/KMZ export/import so
+     re-importing a file this app produced can match paths back to their exact
+     node instead of relying on coordinate proximity (see parseKml). */
+  function extendedDataValue(pm, name) {
+    var ed = childByName(pm, "ExtendedData");
+    if (!ed) return null;
+    var datas = descendantsByName(ed, "Data");
+    for (var i = 0; i < datas.length; i++) {
+      if (datas[i].getAttribute("name") === name) {
+        var v = childByName(datas[i], "value");
+        var text = textOf(v);
+        return text || null;
+      }
+    }
+    return null;
+  }
+
   /* ---------------- KML style parsing ----------------
      KML colors are aabbggrr hex (alpha first, byte-reversed RGB), so they need
      flipping before they can be used as CSS colors. */
@@ -1721,11 +1739,17 @@ svg.leaflet-image-layer.leaflet-interactive path {
     var styles = collectStyles(doc);
     var placemarks = descendantsByName(doc, "Placemark");
     var nodes = [], n = 0;
+    /* Maps this app's own exported node id (see buildKmlBody's "cpNodeId") back to
+       the freshly parsed node object, so re-importing a file this app produced can
+       resolve path endpoints exactly instead of guessing from coordinates - the
+       guess is what silently merged/dropped edges around overlapping nodes. */
+    var srcIdMap = {};
 
     placemarks.forEach(function (pm) {
       var name = textOf(childByName(pm, "name"));
       var desc = textOf(childByName(pm, "description"));
       var style = nodeStyleFrom(placemarkStyle(pm, styles), assets);
+      var srcId = extendedDataValue(pm, "cpNodeId");
       var points = descendantsByName(pm, "Point");
       points.forEach(function (pt, idx) {
         var raw = textOf(childByName(pt, "coordinates"));
@@ -1734,25 +1758,38 @@ svg.leaflet-image-layer.leaflet-interactive path {
         var lon = parseFloat(parts[0]), lat = parseFloat(parts[1]);
         if (!isFinite(lat) || !isFinite(lon)) return;
         n++;
-        nodes.push({
+        var node = {
           id: "n" + n,
           name: name || ("Node " + n) + (points.length > 1 ? " #" + (idx + 1) : ""),
           lat: lat, lon: lon,
           alt: parts.length > 2 ? parseFloat(parts[2]) || 0 : 0,
           desc: desc,
           style: style
-        });
+        };
+        nodes.push(node);
+        /* Only the first <Point> of a multi-point Placemark can own the id - extra
+           points already get their own "#2", "#3" name suffix above. */
+        if (srcId && idx === 0 && !srcIdMap[srcId]) srcIdMap[srcId] = node;
       });
     });
 
     if (!nodes.length) throw new Error("No <Point> placemarks with coordinates were found in this KML.");
 
     /* Also pick up any <LineString> placemarks (e.g. from a previously exported "Paths"
-       folder) and reconstruct connections by matching their two endpoint coordinates
-       back to the parsed nodes (within 1 m), same tolerance used by CSV import. */
-    var links = [], seenPairs = {};
+       folder) and reconstruct connections. A file this app exported carries its own
+       node ids (see buildKmlBody) and those are matched first, since they're exact;
+       anything else falls back to matching the two endpoint coordinates back to the
+       parsed nodes (within 1 m), same tolerance used by CSV import. Every matched
+       LineString becomes a link - two paths that resolve to the same node pair (e.g.
+       because their endpoints sit on top of each other) are kept as separate links
+       rather than silently dropped, since overlapping nodes make that resolution
+       inherently ambiguous and dropping data is worse than an occasional duplicate
+       (which the dashboard's "Duplicate paths" check already surfaces for review). */
+    var links = [];
     placemarks.forEach(function (pm) {
       var style = linkStyleFrom(placemarkStyle(pm, styles));
+      var fromId = extendedDataValue(pm, "cpFrom");
+      var toId = extendedDataValue(pm, "cpTo");
       var lines = descendantsByName(pm, "LineString");
       lines.forEach(function (ls) {
         var raw = textOf(childByName(ls, "coordinates"));
@@ -1762,12 +1799,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
           return { lon: parseFloat(p[0]), lat: parseFloat(p[1]) };
         }).filter(function (p) { return isFinite(p.lat) && isFinite(p.lon); });
         if (pts.length < 2) return;
-        var a = matchNodeByCoord(nodes, pts[0].lat, pts[0].lon);
-        var b = matchNodeByCoord(nodes, pts[pts.length - 1].lat, pts[pts.length - 1].lon);
+        var a = (fromId && srcIdMap[fromId]) || matchNodeByCoord(nodes, pts[0].lat, pts[0].lon);
+        var b = (toId && srcIdMap[toId]) || matchNodeByCoord(nodes, pts[pts.length - 1].lat, pts[pts.length - 1].lon);
         if (!a || !b || a.id === b.id) return;
-        var key = pairKey(a.id, b.id);
-        if (seenPairs[key]) return;
-        seenPairs[key] = true;
         links.push({ a: a.id, b: b.id, style: style });
       });
     });
@@ -3928,6 +3962,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     out.push("<Folder><name>Nodes</name>");
     state.nodes.forEach(function (n, i) {
       out.push("<Placemark><name>" + esc(n.name) + "</name><styleUrl>#" + (nodeRefs[i] || "nodeStyle") + "</styleUrl>" +
+        '<ExtendedData><Data name="cpNodeId"><value>' + esc(n.id) + "</value></Data></ExtendedData>" +
         "<Point><coordinates>" + n.lon + "," + n.lat + "," + (n.alt || 0) + "</coordinates></Point></Placemark>");
     });
     out.push("</Folder>");
@@ -3937,7 +3972,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
       var a = state.byId[l.a], b = state.byId[l.b];
       out.push("<Placemark><name>" + esc(l.name) + "</name>" +
         "<description>" + esc(a.name + " -> " + b.name + " (" + fmtLen(linkLength(l)) + ")") + "</description>" +
-        "<styleUrl>#" + (linkRefs[i] || "pathStyle") + "</styleUrl><LineString><tessellate>1</tessellate><coordinates>" +
+        "<styleUrl>#" + (linkRefs[i] || "pathStyle") + "</styleUrl>" +
+        '<ExtendedData><Data name="cpFrom"><value>' + esc(a.id) + '</value></Data><Data name="cpTo"><value>' + esc(b.id) + "</value></Data></ExtendedData>" +
+        "<LineString><tessellate>1</tessellate><coordinates>" +
         a.lon + "," + a.lat + "," + (a.alt || 0) + " " +
         b.lon + "," + b.lat + "," + (b.alt || 0) +
         "</coordinates></LineString></Placemark>");
