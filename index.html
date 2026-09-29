@@ -761,7 +761,8 @@ svg.leaflet-image-layer.leaflet-interactive path {
     position: absolute; top: 100%; left: 0; margin-top: 6px;
     background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
     padding: 10px; z-index: 2000; display: flex; flex-direction: column; gap: 8px;
-    min-width: 230px; box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
+    min-width: 230px; max-width: min(320px, 92vw); max-height: 80vh; overflow: auto;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
   }
   .popover.hidden { display: none; }
   .popover button, .popover select { width: 100%; }
@@ -4354,6 +4355,21 @@ svg.leaflet-image-layer.leaflet-interactive path {
     document.querySelectorAll(".popover").forEach(function (p) { p.classList.add("hidden"); });
   }
 
+  /* Nudge the panel back within the viewport if its default top-left placement
+     would overflow - e.g. the Display menu sits at the right edge of the header,
+     so on a narrow/short window it can spill past the right or bottom edge. */
+  function keepPopoverInViewport(panel) {
+    panel.style.transform = "";
+    var r = panel.getBoundingClientRect();
+    var margin = 8;
+    var dx = 0, dy = 0;
+    if (r.right > window.innerWidth - margin) dx = (window.innerWidth - margin) - r.right;
+    if (r.left + dx < margin) dx = margin - r.left;
+    if (r.bottom > window.innerHeight - margin) dy = (window.innerHeight - margin) - r.bottom;
+    if (r.top + dy < margin) dy = margin - r.top;
+    if (dx || dy) panel.style.transform = "translate(" + dx + "px, " + dy + "px)";
+  }
+
   function setupPopover(triggerId, panelId, closeOnButtonClick) {
     var trigger = $(triggerId), panel = $(panelId);
     if (!trigger || !panel) return;
@@ -4361,7 +4377,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
       e.stopPropagation();
       var wasOpen = !panel.classList.contains("hidden");
       closeAllPopovers();
-      if (!wasOpen) panel.classList.remove("hidden");
+      if (!wasOpen) {
+        panel.classList.remove("hidden");
+        keepPopoverInViewport(panel);
+      }
     });
     panel.addEventListener("click", function (e) {
       e.stopPropagation();
@@ -4374,6 +4393,11 @@ svg.leaflet-image-layer.leaflet-interactive path {
   setupPopover("btnFileMenu", "fileMenu", true);
   setupPopover("btnDisplayMenu", "displayMenu", false);
   document.addEventListener("click", closeAllPopovers);
+  /* Display menu stays open across toggles, so re-clamp it (and any other open
+     popover) if the window is resized or moved to a different screen while open. */
+  window.addEventListener("resize", function () {
+    document.querySelectorAll(".popover:not(.hidden)").forEach(keepPopoverInViewport);
+  });
 
   map.on("mousedown", beginBoxSelect);
 
