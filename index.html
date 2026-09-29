@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Connecting Paths - KML node linker</title>
+<title>NodeLink - KML node linker</title>
 <style>
 /* Leaflet 1.9.4 - (c) 2010-2023 Vladimir Agafonkin, (c) 2010-2011 CloudMade - BSD-2-Clause */
 /* required styles */
@@ -889,7 +889,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
 </head>
 <body>
 <header>
-  <h1>Connecting<span>Paths</span></h1>
+  <h1>Node<span>Link</span></h1>
   <div class="popover-wrap">
     <button id="btnFileMenu" class="popover-trigger" type="button">File &#9662;</button>
     <div id="fileMenu" class="popover hidden">
@@ -1262,6 +1262,24 @@ svg.leaflet-image-layer.leaflet-interactive path {
   var map = L.map("map", { zoomControl: true, preferCanvas: true, boxZoom: false }).setView([0, 0], 2);
   L.control.scale({ imperial: false }).addTo(map);
   window.__testMap = map;
+
+  /* Leaflet measures the #map container once, when it's created, and never
+     re-checks it on its own. Moving the window to a different screen (or just
+     resizing it) changes the container's size without Leaflet knowing, so the
+     map keeps rendering at the old size and nodes/tiles appear to spill
+     outside the visible area. Re-measure on window resize and on any size
+     change of the container itself (e.g. the header wrapping to two rows). */
+  var invalidateMapSize = (function () {
+    var raf = null;
+    return function () {
+      if (raf) return;
+      raf = requestAnimationFrame(function () { raf = null; map.invalidateSize(); });
+    };
+  })();
+  window.addEventListener("resize", invalidateMapSize);
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(invalidateMapSize).observe(document.getElementById("map"));
+  }
 
   var PROVIDERS = [
     { id: "esristreet", label: "Streets (Esri)",

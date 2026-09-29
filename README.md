@@ -1,4 +1,4 @@
-# Connecting Paths
+# NodeLink
 
 A single-file browser tool to turn KML/KMZ point placemarks into a connected node
 network — click pairs to link them, then export as CSV, KML, or KMZ. No install, no
