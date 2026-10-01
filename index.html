@@ -1792,6 +1792,40 @@ svg.leaflet-image-layer.leaflet-interactive path {
     return uri;
   }
 
+  /* A hand-authored KML names each path after the two places it joins - "A \u2194 B" in
+     the <name>, or "Bidirectional path between A and B" in the <description> (this
+     app's own export writes "A -> B (12.3 m)"). When several nodes sit on one exact
+     coordinate that label is the only surviving record of which twin an endpoint
+     meant, so it is used to break those ties. Both halves must match a real node
+     name or the hint is dropped and coordinates decide exactly as before. */
+  var PATH_LABEL_SPLIT = /\s*(?:\u2194|\u2192|<->|<=>|-->|->)\s*/;
+
+  function pathEndpointNames(name, desc, nameSet) {
+    var texts = [];
+    if (name) texts.push(String(name));
+    if (desc) {
+      var d = String(desc);
+      var between = d.match(/\bbetween\s+(.+)$/i);
+      if (between) {
+        /* Try every possible " and " split point - a node name may itself contain
+           "and", and validating against nameSet below picks the one that is real. */
+        var rest = between[1].replace(/\s*\.\s*$/, "");
+        for (var at = rest.indexOf(" and "); at >= 0; at = rest.indexOf(" and ", at + 1)) {
+          texts.push(rest.slice(0, at) + "\u2194" + rest.slice(at + 5));
+        }
+      }
+      texts.push(d);
+    }
+    for (var i = 0; i < texts.length; i++) {
+      var t = texts[i].replace(/\s*\([^()]*\bm\)\s*$/i, "").trim();
+      var parts = t.split(PATH_LABEL_SPLIT);
+      if (parts.length !== 2) continue;
+      var a = parts[0].trim(), b = parts[1].trim();
+      if (a && b && a !== b && nameSet[a] && nameSet[b]) return [a, b];
+    }
+    return null;
+  }
+
   function parseKml(text, assets) {
     text = String(text).replace(/^[\uFEFF\s]+/, "");
     var doc = new DOMParser().parseFromString(text, "application/xml");
@@ -1851,14 +1885,24 @@ svg.leaflet-image-layer.leaflet-interactive path {
        one physical location, common in hand-drawn KML), matchNodeByCoord can spread
        ambiguous matches across them instead of always picking the same one and
        starving its twin of every edge - or, worse, resolving both ends of one line
-       to that single twin and having it silently discarded as a false self-loop. */
+       to that single twin and having it silently discarded as a false self-loop.
+       Before falling back to that round-robin guess, the path's own label is used
+       to name the intended endpoints (see pathEndpointNames), which is what keeps
+       coincident twins from getting their edges crossed on import. */
     var links = [];
     var matchUsage = {};
+    var nameSet = {};
+    nodes.forEach(function (nd) { if (nd.name) nameSet[nd.name] = true; });
     placemarks.forEach(function (pm) {
       var style = linkStyleFrom(placemarkStyle(pm, styles));
       var fromId = extendedDataValue(pm, "cpFrom");
       var toId = extendedDataValue(pm, "cpTo");
+      var hint = null;
       var lines = descendantsByName(pm, "LineString");
+      if (lines.length) {
+        hint = pathEndpointNames(textOf(childByName(pm, "name")),
+          textOf(childByName(pm, "description")), nameSet);
+      }
       lines.forEach(function (ls) {
         var raw = textOf(childByName(ls, "coordinates"));
         if (!raw) return;
@@ -1868,10 +1912,17 @@ svg.leaflet-image-layer.leaflet-interactive path {
         }).filter(function (p) { return isFinite(p.lat) && isFinite(p.lon); });
         if (pts.length < 2) return;
         var a = (fromId && srcIdMap[fromId]) ||
-          matchNodeByCoord(nodes, pts[0].lat, pts[0].lon, { usage: matchUsage });
+          matchNodeByCoord(nodes, pts[0].lat, pts[0].lon, { usage: matchUsage, prefer: hint });
+        /* Once one end is pinned to a named endpoint, the other end can only be the
+           label's remaining name - otherwise both ends of "A <-> B" could land on A. */
+        var preferB = hint;
+        if (hint && a) {
+          var at = hint.indexOf(a.name);
+          if (at >= 0) preferB = [hint[1 - at]];
+        }
         var b = (toId && srcIdMap[toId]) ||
           matchNodeByCoord(nodes, pts[pts.length - 1].lat, pts[pts.length - 1].lon,
-            { usage: matchUsage, exclude: a && a.id });
+            { usage: matchUsage, exclude: a && a.id, prefer: preferB });
         if (!a || !b || a.id === b.id) return;
         matchUsage[a.id] = (matchUsage[a.id] || 0) + 1;
         matchUsage[b.id] = (matchUsage[b.id] || 0) + 1;
@@ -1898,6 +1949,12 @@ svg.leaflet-image-layer.leaflet-interactive path {
     if (tied.length > 1) {
       var candidates = opts.exclude ? tied.filter(function (n) { return n.id !== opts.exclude; }) : tied;
       if (!candidates.length) candidates = tied;
+      /* The path's own label names the endpoints it was drawn between, so it beats
+         the round-robin spread below, which is only a fairness guess of last resort. */
+      if (opts.prefer && opts.prefer.length) {
+        var named = candidates.filter(function (n) { return opts.prefer.indexOf(n.name) >= 0; });
+        if (named.length) candidates = named;
+      }
       var usage = opts.usage || {};
       candidates.sort(function (x, y) { return (usage[x.id] || 0) - (usage[y.id] || 0); });
       best = candidates[0];
