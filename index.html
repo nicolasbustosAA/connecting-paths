@@ -1495,6 +1495,48 @@ svg.leaflet-image-layer.leaflet-interactive path {
     return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
   }
 
+  // Two nodes sitting within this many meters of each other are effectively on the
+  // exact same spot - real-world duplicates like two gates sharing one physical
+  // point. At that distance one marker completely covers the other, so whichever
+  // one happens to render on top is the only one you can ever see or click; the
+  // other is practically invisible and looks disconnected/gone even though its
+  // data (and every link to it) is perfectly intact.
+  var COINCIDENT_METERS = 0.5;
+  // How far apart (in meters, on the ground) to visually fan coincident nodes out
+  // so every one of them gets its own clickable spot. This only moves where the
+  // marker is *drawn* - node.lat/lon (and everything derived from them: links,
+  // export, distance math) are left untouched.
+  var COINCIDENT_OFFSET_METERS = 0.6;
+
+  /* Groups nodes that sit on (almost) the same point and gives each one a tiny,
+     stable position around that point to render at - see COINCIDENT_METERS above.
+     Stores the result on node._dispLat/_dispLon; nodes with no coincident twin
+     keep their real coordinates. Skipped above OVERLAP_MAX_NODES nodes, same
+     guard the dashboard's own overlap scan uses, since this is an O(n^2) pass. */
+  function computeDisplayPositions() {
+    var nodes = state.nodes;
+    nodes.forEach(function (n) { n._dispLat = n.lat; n._dispLon = n.lon; });
+    if (nodes.length > OVERLAP_MAX_NODES) return;
+    var visited = {};
+    for (var i = 0; i < nodes.length; i++) {
+      if (visited[nodes[i].id]) continue;
+      var cluster = [nodes[i]];
+      for (var j = i + 1; j < nodes.length; j++) {
+        if (visited[nodes[j].id]) continue;
+        if (haversine(nodes[i], nodes[j]) <= COINCIDENT_METERS) { cluster.push(nodes[j]); visited[nodes[j].id] = true; }
+      }
+      if (cluster.length > 1) {
+        var latRad = cluster[0].lat * Math.PI / 180;
+        var mPerDegLat = 111320, mPerDegLon = Math.max(1, 111320 * Math.cos(latRad));
+        cluster.forEach(function (n, k) {
+          var angle = (2 * Math.PI * k) / cluster.length;
+          n._dispLat = n.lat + (COINCIDENT_OFFSET_METERS * Math.cos(angle)) / mPerDegLat;
+          n._dispLon = n.lon + (COINCIDENT_OFFSET_METERS * Math.sin(angle)) / mPerDegLon;
+        });
+      }
+    }
+  }
+
   function fmtLen(m) {
     if (m >= 1000) return (m / 1000).toFixed(3) + " km";
     return m.toFixed(1) + " m";
@@ -2026,11 +2068,12 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   function drawNodes() {
     nodeLayer.clearLayers();
+    computeDisplayPositions();
     state.nodes.forEach(function (node) {
       var url = nodeIconUrl(node);
       var m = url
-        ? L.marker([node.lat, node.lon], { icon: nodeIcon(node, url), keyboard: false, interactive: state.tool !== "pan" })
-        : L.circleMarker([node.lat, node.lon], nodeStyle(node));
+        ? L.marker([node._dispLat, node._dispLon], { icon: nodeIcon(node, url), keyboard: false, interactive: state.tool !== "pan" })
+        : L.circleMarker([node._dispLat, node._dispLon], nodeStyle(node));
       m.on("mousedown", function (e) {
         if (state.tool === "move") { beginNodeDrag(node, m, e); return; }
         if (state.tool === "select") { L.DomEvent.stop(e); }
@@ -2091,7 +2134,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
     var best = null, bestDist = pxRadius;
     state.nodes.forEach(function (n) {
       if (excludeIds && excludeIds.indexOf(n.id) >= 0) return;
-      var np = map.latLngToContainerPoint([n.lat, n.lon]);
+      // Resolve against the *displayed* position (see computeDisplayPositions) so a
+      // click lands on whichever coincident node it's actually visually over,
+      // instead of always tying for the same node they all share true coordinates.
+      var np = map.latLngToContainerPoint([n._dispLat != null ? n._dispLat : n.lat, n._dispLon != null ? n._dispLon : n.lon]);
       var d = p.distanceTo(np);
       if (d < bestDist) { bestDist = d; best = n; }
     });
@@ -2205,7 +2251,13 @@ svg.leaflet-image-layer.leaflet-interactive path {
        move the map (see nodeStyle() for the matching node-side change). */
     var opts = linkStyle(l);
     opts.interactive = state.tool !== "path" && state.tool !== "pan";
-    var line = L.polyline([[a.lat, a.lon], [b.lat, b.lon]], opts);
+    // Drawn at the *displayed* endpoint positions (see computeDisplayPositions) so a
+    // path visibly reaches the fanned-out marker instead of stopping short at the
+    // shared point it and a coincident twin both sit on.
+    var line = L.polyline([
+      [a._dispLat != null ? a._dispLat : a.lat, a._dispLon != null ? a._dispLon : a.lon],
+      [b._dispLat != null ? b._dispLat : b.lat, b._dispLon != null ? b._dispLon : b.lon]
+    ], opts);
     if (state.tool !== "path") {
       line.on("click", function (e) {
         L.DomEvent.stopPropagation(e);
@@ -2497,8 +2549,11 @@ svg.leaflet-image-layer.leaflet-interactive path {
     suppressClick = false;
     var a = state.byId[l.a], b = state.byId[l.b];
     if (!a || !b) return;
-    var pa = map.latLngToContainerPoint([a.lat, a.lon]);
-    var pb = map.latLngToContainerPoint([b.lat, b.lon]);
+    // Use the same displayed positions the line was actually drawn at (see drawLink),
+    // so "which end is closer to the mousedown" matches what's on screen even when
+    // an endpoint sits in a coincident-node cluster.
+    var pa = map.latLngToContainerPoint([a._dispLat != null ? a._dispLat : a.lat, a._dispLon != null ? a._dispLon : a.lon]);
+    var pb = map.latLngToContainerPoint([b._dispLat != null ? b._dispLat : b.lat, b._dispLon != null ? b._dispLon : b.lon]);
     var startPoint = downEvt.containerPoint;
     /* Whichever endpoint is nearer the mousedown point is the one that moves. */
     var movingEnd = startPoint.distanceTo(pa) <= startPoint.distanceTo(pb) ? "a" : "b";
@@ -3928,16 +3983,32 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   function findNode(name, lat, lon) {
     var la = parseFloat(lat), lo = parseFloat(lon);
+    var nm = name ? String(name).trim().toLowerCase() : "";
     var best = null, bestD = Infinity;
     if (isFinite(la) && isFinite(lo)) {
       state.nodes.forEach(function (n) {
         var d = haversine(n, { lat: la, lon: lo });
         if (d < bestD) { bestD = d; best = n; }
       });
-      if (best && bestD <= 1) return best; // within 1 m
+      if (best && bestD <= 1) {
+        /* Two different nodes can sit on the exact same spot (e.g. two gates that
+           share one physical point). Nearest-coordinate alone can't tell them
+           apart and would always resolve to the same one of the tied nodes - so
+           every other coincident node's row would keep matching that same node,
+           get treated as a duplicate connection, and silently lose its own edge.
+           The CSV's own name column does identify which one was meant, so prefer
+           an exact name match among the coordinate-tied candidates first. */
+        if (nm) {
+          var tied = state.nodes.filter(function (n) { return haversine(n, { lat: la, lon: lo }) <= bestD + 0.05; });
+          if (tied.length > 1) {
+            var byTiedName = tied.filter(function (n) { return n.name.toLowerCase() === nm; });
+            if (byTiedName.length === 1) return byTiedName[0];
+          }
+        }
+        return best;
+      }
     }
-    if (name) {
-      var nm = String(name).trim().toLowerCase();
+    if (nm) {
       var byName = state.nodes.filter(function (n) { return n.name.toLowerCase() === nm; })[0];
       if (byName) return byName;
     }
