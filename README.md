@@ -1,19 +1,36 @@
-# NodeLink
+# oraa-bgs-node-link (NodeLink)
 
-A single-file browser tool to turn KML/KMZ point placemarks into a connected node
-network — click pairs to link them, then export as CSV, KML, or KMZ. No install, no
+Single-file browser tool to turn KML/KMZ point placemarks into a connected node
+network. Click pairs to link them, then export as CSV, KML, or KMZ. No install, no
 server, no account: everything runs locally in your browser.
+
+The repository is `oraa-bgs-node-link`; the app itself is titled **NodeLink**.
 
 ## Getting started
 
 1. Double-click `index.html` to open it in your browser (Chrome, Edge, or Firefox).
-2. Click **Load KML/KMZ…**, or drag a `.kml`/`.kmz` file onto the window. `sample.kml`
-   is included if you just want to try it out.
+2. Open the **File** menu and click **Load KML/KMZ…**, or drag a `.kml`/`.kmz` file
+   onto the window. `sample.kml` is included if you just want to try it out; real
+   station files live under `Stations/`.
 3. Click **Add path** in the tool palette (the cursor becomes a crosshair).
 4. Click a node on the map (or in the Nodes list) — it turns orange — then click a
    second node. The path is created immediately and named automatically
    (`FROM↔TO` by default). Keep clicking to chain a route.
-5. Click **Export…** and pick any combination of **CSV**, **KML**, and **KMZ**.
+5. Open **File → Export…** and pick any combination of **CSV**, **KML**, and **KMZ**.
+
+The header groups its controls into two menus: **File** (Load KML/KMZ, Import CSV,
+Export, Clear links) and **Display** (basemap, Recheck maps, node/path labels, label
+filter, File styles, Snap). Tools, Naming, Bulk style, Undo/Redo, Zoom to fit, and
+Dashboard stay on the main toolbar.
+
+## Repository contents
+
+| Path | Purpose |
+| --- | --- |
+| `index.html` | The entire app (HTML, CSS, and JavaScript in one file). |
+| `sample.kml` | Small example file to try the tool. |
+| `Stations/` | Station network files (CLT, DFW, JFK) used as real-world references. |
+| `SECURITY.md` | Security policy. |
 
 ## Editing tools
 
@@ -144,16 +161,24 @@ clears their icons).
 - Colors, icons, and line styles defined in the file are shown automatically; use
   **File styles** to toggle them off in favor of this app's own palette.
 - Duplicate connections between the same two nodes are automatically rejected.
+- **Coincident nodes** (several nodes at the same or nearly the same coordinates) are
+  drawn and clicked at small fanned-out offsets so each stays visible and selectable.
+  Exports and distance calculations always use the true coordinates.
+- If a KML was not exported by this app, path endpoints are matched by coordinate.
+  When several nodes share a coordinate, the path's name (`A <-> B`) or description
+  (`Bidirectional path between A and B`) is used to pick the right one — a label only
+  breaks ties and never moves an endpoint away from where the line actually goes.
 
 ## Importing CSV
 
-**Import CSV** re-loads a previously exported CSV and rebuilds the connections,
-matching nodes by coordinates (falling back to name if needed). Path names are
-regenerated from the current naming template.
+**Import CSV** (File menu) re-loads a previously exported CSV and rebuilds the
+connections, matching nodes by coordinates; if several nodes share the same
+coordinates, the name decides. Path names are regenerated from the current naming
+template.
 
 ## Exporting
 
-Click **Export…**, check any combination of **CSV**, **KML**, and **KMZ**, and click
+Open **File → Export…**, check any combination of **CSV**, **KML**, and **KMZ**, and click
 Export. If you pick just one format, your browser may offer a native "save as"
 dialog so you can choose the destination (supported in desktop Chrome/Edge);
 otherwise, or if you pick more than one format, each file downloads to your normal
@@ -176,6 +201,8 @@ downloads folder.
 
 - The app itself works fully offline — only the map tiles need an internet
   connection, so pick **No basemap** if you have none.
+- The map re-measures itself when the window is resized or moved to another screen,
+  and the File/Display menus stay within the window.
 - Corporate or restricted networks sometimes block certain map tile providers; use
   **Recheck maps** after switching networks, or set up a **Custom tile server…**
   pointing at an internal source.
